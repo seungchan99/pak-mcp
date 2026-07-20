@@ -1,0 +1,41 @@
+# --- Secrets / machine-specific config (NEVER commit) ---
+claude_desktop_config*.json
+*.local.json
+.env
+
+# --- Vendor internal dumps (PAK / Müller-BBM proprietary, do not redistribute) ---
+scan.txt
+grid.txt
+PAK_broswer.txt
+
+# --- Measurement data & exported results ---
+*.dat
+*.atf
+*.uf
+rms_export/
+
+# --- Output artifacts ---
+*.png
+*.jpg
+*.jpeg
+*.pptx
+*.docx
+~$*
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# --- Backups / editor / OS ---
+*.bak
+*.bak_*
+*.tmp
+*.swp
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
