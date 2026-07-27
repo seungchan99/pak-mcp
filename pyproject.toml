@@ -1,0 +1,27 @@
+[project]
+name = "pak-mcp"
+version = "0.1.0"
+description = "MCP servers for LLM-driven NVH analysis with Muller-BBM PAK"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "PAK System Co., Ltd." }]
+keywords = ["mcp", "nvh", "pak", "acoustics", "vibration", "llm", "muller-bbm"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: Microsoft :: Windows",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering",
+]
+dependencies = [
+  "mcp>=1.2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/seungchan99/pak-mcp"
+Issues = "https://github.com/seungchan99/pak-mcp/issues"
+
+# NOTE: The servers require a local PAK 6.4 install and Windows COM (PAK's Tcl
+# bridge via the standard-library `tkinter`), which cannot be pip-installed.
+# This metadata is for packaging/discovery; run the servers directly per README.

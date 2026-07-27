@@ -141,6 +141,33 @@ def _close_gd():
 # --------------------------------------------------------------------------- #
 # Row-level building block (used by the granular tools and configure_row)
 # --------------------------------------------------------------------------- #
+def _emit_sound_fweight(quantity, weighting=None, sound_weighting="A", steps=None):
+    """Apply frequency weighting via Item.DarstFilter.Fweight -- the WRITABLE + EFFECTIVE
+    path for APS / Order APS / Order complex spectra (Datentyp.Tp2*_fweight is a NO-OP for
+    these; verified). Sound is ALWAYS A-weighted: when no explicit `weighting` is given,
+    `sound_weighting` (default 'A') is auto-applied to Sound Pressure channels, while
+    vibration / other quantities stay linear. Assumes $it exists and $dt has already been
+    released (DarstFilter is an Item sub-object). Returns the weighting actually applied."""
+    _wt = weighting
+    if not _wt:
+        _q = (quantity or "").lower()
+        if sound_weighting and ("sound" in _q or "pressure" in _q):
+            _wt = sound_weighting
+    if _wt and str(_wt).lower() != "lin":
+        _ev("set df [$it DarstFilter]")
+        try:
+            _ev("$df Fweight %s" % _brace(_wt))
+            if steps is not None:
+                steps["weighting"] = _wt
+        except Exception:
+            pass
+        _ev("catch {release $df}; unset df")
+    else:
+        if steps is not None:
+            steps["weighting"] = "lin"
+    return _wt
+
+
 def _apply_row(
     row,
     active=None,
@@ -155,6 +182,8 @@ def _apply_row(
     sampling_rate=None,
     blocksize=None,
     track_quantity=None,
+    track_position=None,
+    track_direction=None,
     track_start=None,
     track_stop=None,
     weighting=None,
@@ -243,18 +272,37 @@ def _apply_row(
             else:
                 steps["weighting_error"] = str(last_err)
         _ev("catch {release $dt}; unset dt")
+        # Sound is ALWAYS A-weighted: for APS/Octave spectra apply the EFFECTIVE
+        # weighting path (Item.DarstFilter.Fweight). Datentyp.Tp2*_fweight above is a
+        # no-op for these, so this is what actually makes the axis dB(A). Auto-applies
+        # A to Sound Pressure; explicit `weighting` (incl. "lin") is honoured.
+        if _is_spectrum:
+            _emit_sound_fweight(quantity, weighting, "A", steps)
 
     # Track parameter
-    if (track_quantity is not None or track_start is not None or track_stop is not None
-            or stat_parameter is not None):
+    if (track_quantity is not None or track_position is not None
+            or track_direction is not None or track_start is not None
+            or track_stop is not None or stat_parameter is not None):
         _ev("set tp [$it TrackingParams]")
         tq = track_quantity or "Time"
-        _ev("$tp SetChanposTrack {} {} %s" % _brace(tq))
-        _ev("$tp Start %s" % _brace(track_start if track_start is not None else "Min"))
-        _ev("$tp Stop %s" % _brace(track_stop if track_stop is not None else "Max"))
-        steps["track"] = {"quantity": tq,
-                          "start": track_start if track_start is not None else "Min",
-                          "stop": track_stop if track_stop is not None else "Max"}
+        _tstart = track_start if track_start is not None else "Min"
+        _tstop = track_stop if track_stop is not None else "Max"
+        if track_position:
+            # Channel track (e.g. Distance in exterior/pass-by). PAK requires a
+            # position label for a channel track, so the empty-position form fails
+            # with "requires a position label". Pass position/direction/quantity
+            # explicitly (as get_channels reports them, e.g. Distance / S /
+            # "Cart. coord.x").
+            _tdir = track_direction if track_direction is not None else "S"
+            _ev("$tp SetChanposTrack %s %s %s"
+                % (_brace(track_position), _brace(_tdir), _brace(tq)))
+            steps["track"] = {"position": track_position, "direction": _tdir,
+                              "quantity": tq, "start": _tstart, "stop": _tstop}
+        else:
+            _ev("$tp SetChanposTrack {} {} %s" % _brace(tq))
+            steps["track"] = {"quantity": tq, "start": _tstart, "stop": _tstop}
+        _ev("$tp Start %s" % _brace(_tstart))
+        _ev("$tp Stop %s" % _brace(_tstop))
         if stat_parameter is not None:
             token = STAT_MAP.get(stat_parameter, stat_parameter)
             _ev("$tp Stats %s" % _brace(token))
@@ -360,12 +408,23 @@ def set_data_type(row: int, position: str, direction: str, quantity: str,
 
 @mcp.tool()
 def set_track(row: int, track_quantity: str = "Time", start: str = "Min",
-              stop: str = "Max") -> dict:
-    """Configure the Track parameter tab: Par.-channel + range (default Min..Max)."""
+              stop: str = "Max", track_position: str = "",
+              track_direction: str = "") -> dict:
+    """Configure the Track parameter tab: Par.-channel + range (default Min..Max).
+
+    Plain TIME track: leave track_position empty, track_quantity="Time".
+    CHANNEL track that PAK requires a position label for (e.g. Distance in
+    exterior/pass-by noise): pass track_position="Distance", track_direction="S",
+    track_quantity="Cart. coord.x" (use the exact strings get_channels reports),
+    start="-10", stop="20". Without the position, PAK raises
+    "Working mode ... requires a position label".
+    """
     try:
         _open_gd()
-        steps = _apply_row(row, track_quantity=track_quantity, track_start=start,
-                           track_stop=stop)
+        steps = _apply_row(row, track_quantity=track_quantity,
+                           track_position=track_position or None,
+                           track_direction=track_direction or None,
+                           track_start=start, track_stop=stop)
         return {"ok": True, "row": row, "applied": steps}
     finally:
         _close_gd()
@@ -410,7 +469,9 @@ def configure_row(row: int, active: bool = True, diagram: int = 1, curve: int = 
                   graphic_data_type: str = "", sampling_rate: str = "",
                   blocksize: str = "",
                   track_quantity: str = "Time", track_start: str = "Min",
-                  track_stop: str = "Max", weighting: str = "",
+                  track_stop: str = "Max",
+                  track_position: str = "", track_direction: str = "",
+                  weighting: str = "",
                   stat_parameter: str = "",
                   x_from: str = "", x_to: str = "", x_type: str = "",
                   y_type: str = "", y_from: str = "", y_to: str = "",
@@ -434,6 +495,7 @@ def configure_row(row: int, active: bool = True, diagram: int = 1, curve: int = 
             sampling_rate=sampling_rate or None,
             blocksize=blocksize or None,
             track_quantity=track_quantity, track_start=track_start, track_stop=track_stop,
+            track_position=track_position or None, track_direction=track_direction or None,
             weighting=weighting or None,
             stat_parameter=stat_parameter or None,
             x_from=x_from or None, x_to=x_to or None, x_type=x_type or None,
@@ -518,7 +580,11 @@ def configure_rows(rows: str, deactivate_beyond: int = 0, output: bool = True) -
         rows: JSON list of row objects. Each object needs "row" (1-based) plus any of:
               active, diagram, curve, measurement, position, direction, quantity,
               measurement_data_type, graphic_data_type, sampling_rate,
-              track_quantity, track_start, track_stop, weighting.
+              track_quantity, track_position, track_direction, track_start,
+              track_stop, weighting.
+              For a Distance (exterior/pass-by) track pass track_position="Distance",
+              track_direction="S", track_quantity="Cart. coord.x", track_start="-10",
+              track_stop="20". Omit track_position for a plain Time track.
         deactivate_beyond: if > 0, any row in 1..deactivate_beyond NOT present in the
               list is set Active=0 (cleans up leftover rows). e.g. 6 clears rows 4-6
               when you only pass rows 1-3.
@@ -533,7 +599,8 @@ def configure_rows(rows: str, deactivate_beyond: int = 0, output: bool = True) -
     keys = ("active", "diagram", "curve", "measurement", "position", "direction",
             "quantity", "measurement_data_type", "graphic_data_type", "sampling_rate",
             "blocksize",
-            "track_quantity", "track_start", "track_stop", "weighting", "stat_parameter",
+            "track_quantity", "track_position", "track_direction",
+            "track_start", "track_stop", "weighting", "stat_parameter",
             "x_from", "x_to", "x_type", "y_type", "y_from", "y_to")
     try:
         _open_gd(visible=True)
@@ -1215,10 +1282,10 @@ def _capture_viewer(png_path):
 
 
 @mcp.tool()
-def capture_viewer(path: str = "C:/MCPProject_pak/view_shot.png") -> dict:
+def capture_viewer(path: str = "C:/MCPproject_pak/view_shot.png") -> dict:
     """Screenshot the PAK Graphic Viewer window to `path` -- the SAME capture that
     output_rms uses (reads the currently displayed graph, any analysis: Order APS,
-    Order complex, APS, etc.). Default path C:/MCPProject_pak/view_shot.png. Use this
+    Order complex, APS, etc.). Default path C:/MCPproject_pak/view_shot.png. Use this
     to grab the current screen so the result can be read from the image without
     reconfiguring anything."""
     ok, info = _capture_viewer(path)
@@ -1364,7 +1431,7 @@ def read_viewer_cursors() -> dict:
 # multi-diagram layout, so it is unreliable there. Decorator removed so this is
 # NOT registered as an MCP tool. To re-enable, restore the '@mcp.tool()' line.
 # @mcp.tool()
-def autoscale_viewer(capture: bool = False, path: str = "C:/MCPProject_pak/view_shot.png") -> dict:
+def autoscale_viewer(capture: bool = False, path: str = "C:/MCPproject_pak/view_shot.png") -> dict:
     """Auto-scale all axes of the PAK Graphic Viewer by sending Ctrl+A to its window.
 
     Mirrors the interactive 'Ctrl+A' autoscale: fits every diagram's axes to the
@@ -1416,11 +1483,15 @@ def output_rms(rows: str, band_from: str = "0", band_to: str = "1000",
     Args:
         rows: JSON list, each {row, diagram, curve, measurement, position,
               direction, quantity}. (Channels to include; group by diagram.)
+              Each row may ALSO carry its own "track_start"/"track_stop" — these
+              override the global window for that row, so ONE call can give each
+              measurement a DIFFERENT time window (e.g. the same GPS location across
+              speeds -> different t per run) and render everything in a SINGLE output.
         band_from / band_to: RMS frequency band in Hz.
         layout: graphic layout name that renders the RMS table (Optionen.Foname).
         deactivate_beyond: deactivate rows 1..N not in the list.
         capture: if True and pillow is installed, screenshot the Graphic Viewer to
-              C:/MCPProject_pak/rms_shot.png so the values can be read from the image.
+              C:/MCPproject_pak/rms_shot.png so the values can be read from the image.
         draw_table: True (default) draws the RMS value table via the layout. False
               outputs the 2D comparison curves only, with NO RMS table (equivalent to
               setting the toolbar "Layout" to None); the band-pass Sum level is skipped.
@@ -1509,10 +1580,15 @@ def output_rms(rows: str, band_from: str = "0", band_to: str = "1000",
             # 3D and PAK rejects two 3D curves per diagram).
             if stat_parameter and stat_parameter != "-":
                 _tok = STAT_MAP.get(stat_parameter, stat_parameter)
+                # Per-row time window overrides the global track_start/track_stop, so a
+                # single output_rms call can give each measurement its OWN window (e.g.
+                # same GPS location across speeds -> different t) and render ONCE.
+                _rts = e.get("track_start", track_start)
+                _rtp = e.get("track_stop", track_stop)
                 _ev("set tp [$it TrackingParams]")
                 _ev("$tp SetChanposTrack {} {} %s" % _brace("Time"))
-                _ev("$tp Start %s" % _brace(track_start))
-                _ev("$tp Stop %s" % _brace(track_stop))
+                _ev("$tp Start %s" % _brace(_rts))
+                _ev("$tp Stop %s" % _brace(_rtp))
                 _ev("$tp Stats %s" % _brace(_tok))
                 _ev("catch {release $tp}; unset tp")
             # Set Sum level 1 = band-pass magnitude now that the row is APS.
@@ -1584,7 +1660,7 @@ def output_rms(rows: str, band_from: str = "0", band_to: str = "1000",
         result["warning"] = ("Row 1 Sum level 1 is not 'Bandpass mag' -- set it once "
                              "in PAK (Data definition > Sum level) then retry.")
     if capture:
-        ok, info = _capture_viewer("C:/MCPProject_pak/rms_shot.png")
+        ok, info = _capture_viewer("C:/MCPproject_pak/rms_shot.png")
         result["capture"] = info if ok else {"error": info,
                              "hint": "pip install pillow, or share a screenshot"}
     return result
@@ -1603,7 +1679,7 @@ def _apply_orderaps_row(row, active=None, diagram=None, curve=None, measurement=
     blocksize=None, max_order=None,
     rpm_position=None, rpm_direction=None, rpm_quantity=None,
     delta=None, track_start=None, track_stop=None,
-    x_from=None, x_to=None):
+    x_from=None, x_to=None, weighting=None, sound_weighting="A"):
     """Configure one row as an Order APS analysis on an already-open $gd."""
     steps = {}
     idx = row - 1
@@ -1633,6 +1709,8 @@ def _apply_orderaps_row(row, active=None, diagram=None, curve=None, measurement=
     steps["graphic_data_type"] = "Order APS"
     steps["sampling_rate"] = "32768"
     _ev("catch {release $dt}; unset dt")
+    # --- Frequency weighting (sound ALWAYS A-weighted) via Item.DarstFilter.Fweight ---
+    _emit_sound_fweight(quantity, weighting, sound_weighting, steps)
     # --- Track parameter: RPM channel as x-axis + Delta ---
     _ev("set tp [$it TrackingParams]")
     _rq = rpm_quantity or "Rotational Speed"
@@ -1715,7 +1793,8 @@ def configure_orderaps_rows(rows: str, deactivate_beyond: int = 0, output: bool 
     data = json.loads(rows) if isinstance(rows, str) else rows
     keys = ("active", "diagram", "curve", "measurement", "position", "direction",
             "quantity", "blocksize", "max_order", "rpm_position", "rpm_direction",
-            "rpm_quantity", "delta", "track_start", "track_stop", "x_from", "x_to")
+            "rpm_quantity", "delta", "track_start", "track_stop", "x_from", "x_to",
+            "weighting", "sound_weighting")
     try:
         _open_gd(visible=True)
         results = []
@@ -1752,7 +1831,7 @@ def _apply_ordercomplex_row(row, active=None, diagram=None, curve=None, measurem
     position=None, direction=None, quantity=None,
     order=None, blocksize=None, max_order=None,
     rpm_position=None, rpm_direction=None, rpm_quantity=None,
-    delta=None, track_start=None, track_stop=None):
+    delta=None, track_start=None, track_stop=None, weighting=None, sound_weighting="A"):
     """Configure one row as Order complex (single-order magnitude vs RPM) on $gd."""
     steps = {}
     idx = row - 1
@@ -1786,6 +1865,8 @@ def _apply_ordercomplex_row(row, active=None, diagram=None, curve=None, measurem
     steps["sampling_rate"] = "32768"
     steps["par"] = "Magnitude"
     _ev("catch {release $dt}; unset dt")
+    # --- Frequency weighting (sound ALWAYS A-weighted) via Item.DarstFilter.Fweight ---
+    _emit_sound_fweight(quantity, weighting, sound_weighting, steps)
     # --- Track parameter: RPM channel + Delta ---
     _ev("set tp [$it TrackingParams]")
     _rq = rpm_quantity or "Rotational Speed"
@@ -1862,7 +1943,8 @@ def configure_ordercomplex_rows(rows: str, deactivate_beyond: int = 0, output: b
     data = json.loads(rows) if isinstance(rows, str) else rows
     keys = ("active", "diagram", "curve", "measurement", "position", "direction",
             "quantity", "order", "blocksize", "max_order", "rpm_position",
-            "rpm_direction", "rpm_quantity", "delta", "track_start", "track_stop")
+            "rpm_direction", "rpm_quantity", "delta", "track_start", "track_stop",
+            "weighting", "sound_weighting")
     try:
         _open_gd(visible=True)
         results = []
@@ -2058,18 +2140,28 @@ def _apply_overall_row(row, active=None, diagram=None, curve=None, measurement=N
     if measurement:
         measurement = _cp_suffix(measurement)
         _ev("$it Datafile %s" % _brace(measurement)); steps["measurement"] = measurement
-    # --- Data type: Sum level ---
+    # --- Data type: Overall / Sum level ---
     _ev("set dt [$it Datentyp]")
     if quantity:
         _ev("$dt SetChanpos %s %s %s" % (_brace(position), _brace(direction), _brace(quantity)))
         steps["channel"] = {"position": position, "direction": direction, "quantity": quantity}
     _ev("$dt Mdtype %s" % _brace("Throughput"))
     _ev("$dt Srate %s" % _brace("32768"))
-    _ev("$dt Pdtype %s" % _brace("Sum level"))
+    # The Overall-level PlotDtype token varies by PAK build: current builds expose it
+    # as "Overall" (older ones as "Sum level"), and only ONE is in the filtered
+    # selection list. Try each; keep whichever the build accepts.
+    _oa_tok = None
+    for _cand in ("Overall", "Sum level"):
+        try:
+            _ev("$dt Pdtype %s" % _brace(_cand))
+            _oa_tok = _cand
+            break
+        except Exception:
+            continue
     _bs = blocksize if blocksize is not None else "16384"
     _ev("$dt Tp2spec_blocksize %s" % _brace(_bs)); steps["blocksize"] = _bs
     steps["measurement_data_type"] = "Throughput"
-    steps["graphic_data_type"] = "Sum level"
+    steps["graphic_data_type"] = _oa_tok or "Overall"
     steps["sampling_rate"] = "32768"
     _ev("catch {release $dt}; unset dt")
     # --- Frequency weighting (sound -> A) via Item.DarstFilter.Fweight ---
@@ -2324,6 +2416,238 @@ def configure_can_rows(rows: str, deactivate_beyond: int = 0, output: bool = Tru
             kw = {k: rr.get(k) for k in keys if k in rr}
             kw.setdefault("active", True)
             steps = _apply_can_row(rownum, **kw)
+            results.append({"row": rownum, "applied": steps})
+        if deactivate_beyond and int(deactivate_beyond) > 0:
+            for rn in range(1, int(deactivate_beyond) + 1):
+                if rn not in listed:
+                    _ev("set it [$gd Item %d]" % (rn - 1))
+                    _ev("$it Active 0")
+                    _ev("catch {release $it}; unset it")
+        if output:
+            _apply_layout("standard.vas_dly", _STD_LAYOUT_TEMPLATE)
+            _ev("$gd Graphicoutput")
+        return {"ok": True, "rows": results,
+                "deactivated_beyond": int(deactivate_beyond or 0), "output": bool(output)}
+    finally:
+        _close_gd()
+        _reset()
+
+
+# --------------------------------------------------------------------------- #
+# Detector (레벨 vs 트랙축; 정속/패스바이 외부소음에 주로 씀). Datentyp Pdtype
+# "Detector" + Tp2det_type ("rms"/"peak"/...) + Tp2det_fweight (sound -> "A").
+# Track is usually DISTANCE-based for pass-by: Par-Channel = Cart. Coord.x /
+# Distance, Start -10 .. Stop 20 m, Delta 0.25 m. (Also works with Time / RPM.)
+# The distance quantity reads back as "Cart. coord.x"; SetChanposTrack is tried
+# with a couple of casings. Non-RMS -> standard.vas_dly layout.
+# --------------------------------------------------------------------------- #
+def _apply_detector_row(row, active=None, diagram=None, curve=None, measurement=None,
+    position=None, direction=None, quantity=None,
+    detector_type=None, weighting=None, sound_weighting="A",
+    track_position=None, track_direction=None, track_quantity=None,
+    track_start=None, track_stop=None, delta=None):
+    """Configure one row as a Detector analysis (default: distance-track) on $gd."""
+    steps = {}
+    idx = row - 1
+    _ev("set it [$gd Item %d]" % idx)
+    if active is not None:
+        _ev("$it Active %d" % (1 if active else 0)); steps["active"] = bool(active)
+    if diagram is not None:
+        _ev("$it Diag %d" % int(diagram)); steps["diagram"] = int(diagram)
+    if curve is not None:
+        _ev("$it Curve %d" % int(curve)); steps["curve"] = int(curve)
+    if measurement:
+        measurement = _cp_suffix(measurement)
+        _ev("$it Datafile %s" % _brace(measurement)); steps["measurement"] = measurement
+    # --- Data type: Detector ---
+    _ev("set dt [$it Datentyp]")
+    if quantity:
+        _ev("$dt SetChanpos %s %s %s" % (_brace(position), _brace(direction), _brace(quantity)))
+        steps["channel"] = {"position": position, "direction": direction, "quantity": quantity}
+    _ev("$dt Mdtype %s" % _brace("Throughput"))
+    _ev("$dt Srate %s" % _brace("32768"))
+    _ev("$dt Pdtype %s" % _brace("Detector"))
+    _dtype = detector_type if detector_type else "rms"
+    _ev("$dt Tp2det_type %s" % _brace(_dtype)); steps["detector_type"] = _dtype
+    # frequency weighting (Detector's own field = Tp2det_fweight); sound -> A
+    _wt = weighting
+    if not _wt:
+        _q = (quantity or "").lower()
+        if sound_weighting and ("sound" in _q or "pressure" in _q):
+            _wt = sound_weighting
+    if _wt and _wt.lower() != "lin":
+        try:
+            _ev("$dt Tp2det_fweight %s" % _brace(_wt)); steps["weighting"] = _wt
+        except Exception:
+            pass
+    else:
+        steps["weighting"] = "lin"
+    steps["measurement_data_type"] = "Throughput"
+    steps["graphic_data_type"] = "Detector"
+    steps["sampling_rate"] = "32768"
+    _ev("catch {release $dt}; unset dt")
+    # --- Track parameter ---
+    _ev("set tp [$it TrackingParams]")
+    if track_quantity:
+        # try candidate quantity spellings; VERIFY via Trackquantity read-back that
+        # the track actually became the value channel (no exception != took effect).
+        # Try the caller's quantity FIRST. Only the distance quantity has a casing
+        # trap ("Cart. Coord.x" -> Error; "Cart. coord.x" works), so add those
+        # variants ONLY when the quantity is the Cartesian-coordinate one. For any
+        # other track (Driving Speed, Rotational Speed, Torque, ...) use it verbatim.
+        _cands = [track_quantity]
+        if "coord" in track_quantity.lower():
+            for _q in ("Cart. coord.x", "Cart. Coord.x"):
+                if _q not in _cands:
+                    _cands.append(_q)
+        _tqd = _brace(track_direction if track_direction is not None else "S")
+        _applied = None
+        for _q in _cands:
+            try:
+                _ev("$tp SetChanposTrack %s %s %s" % (_brace(track_position), _tqd, _brace(_q)))
+            except Exception:
+                continue
+            try:
+                _cur = _ev("$tp Trackquantity")
+            except Exception:
+                _cur = ""
+            _lc = str(_cur).lower()
+            if _cur and "time" not in _lc and "error" not in _lc:
+                _applied = _cur
+                break
+        steps["track"] = {"position": track_position, "direction": track_direction,
+                          "quantity": _applied or "(NOT set - still Time?)"}
+    else:
+        _ev("$tp SetChanposTrack {} {} %s" % _brace("Time"))
+        steps["track"] = {"quantity": "Time"}
+    _ev("$tp Start %s" % _brace(track_start if track_start is not None else "Min"))
+    _ev("$tp Stop %s" % _brace(track_stop if track_stop is not None else "Max"))
+    _dl = delta if delta is not None else "0.25"
+    _ev("$tp Delta %s" % _brace(_dl)); steps["delta"] = _dl
+    _ev("catch {release $tp}; unset tp")
+    _ev("catch {release $it}; unset it")
+    return steps
+
+
+# Named track presets for exterior-noise Detector (so other windows can pick a track
+# with ONE arg without knowing the exact channel/quantity/range strings).
+_DETECTOR_TRACK_PRESETS = {
+    "distance": {"track_position": "Distance", "track_direction": "S",
+                 "track_quantity": "Cart. coord.x", "track_start": "-10",
+                 "track_stop": "20", "delta": "0.25"},   # 정속/pass-by, metres
+    "speed":    {"track_position": "Speed", "track_direction": "S",
+                 "track_quantity": "Driving Speed", "track_start": "40",
+                 "track_stop": "60", "delta": "0.25"},    # 가속, km/h (e.g. Vbox GPS)
+    "time":     {"track_position": "", "track_direction": "S",
+                 "track_quantity": "", "track_start": "Min",
+                 "track_stop": "Max", "delta": "0.125"},   # time track, seconds
+}
+
+
+def _resolve_detector_track(track_preset, track_position, track_direction,
+                            track_quantity, track_start, track_stop, delta):
+    """Merge a named preset (distance/speed/time) with any explicit overrides
+    (non-empty explicit value wins)."""
+    p = _DETECTOR_TRACK_PRESETS.get((track_preset or "distance").lower(),
+                                    _DETECTOR_TRACK_PRESETS["distance"])
+    def pick(v, key):
+        return v if (v not in (None, "")) else p[key]
+    return {
+        "track_position": pick(track_position, "track_position"),
+        "track_direction": pick(track_direction, "track_direction"),
+        # track_quantity == "" is meaningful (Time), so only fall back when None
+        "track_quantity": track_quantity if track_quantity not in (None,) else p["track_quantity"],
+        "track_start": pick(track_start, "track_start"),
+        "track_stop": pick(track_stop, "track_stop"),
+        "delta": pick(delta, "delta"),
+    }
+
+
+@mcp.tool()
+def configure_detector_row(row: int, active: bool = True, diagram: int = 1, curve: int = 1,
+    measurement: str = "", position: str = "", direction: str = "", quantity: str = "",
+    detector_type: str = "rms", weighting: str = "", sound_weighting: str = "A",
+    track_preset: str = "distance",
+    track_position: str = "", track_direction: str = "", track_quantity: str = "",
+    track_start: str = "", track_stop: str = "", delta: str = "",
+    output: bool = False) -> dict:
+    """Configure one DETECTOR row (외부소음: 정속/패스바이 or 가속), then optionally output.
+
+    Detector level (rms/peak/...) vs a track axis. Fixed: Throughput, Srate 32768,
+    Pdtype "Detector". Sound channels auto A-weighted (Tp2det_fweight).
+
+    Pick the track with ONE arg via `track_preset` (explicit track_* args override):
+      * "distance" (DEFAULT, 정속/pass-by): Par.-Channel Distance / Cart. coord.x,
+        Start -10, Stop 20 m, Delta 0.25.
+      * "speed" (가속): Par.-Channel Speed / Driving Speed (e.g. Vbox GPS),
+        Start 40, Stop 60 km/h, Delta 0.25.
+      * "time": Time track, Min..Max, Delta 0.125 s.
+    For any other value track (RPM/Torque) pass track_quantity="Rotational Speed" etc.
+
+    Args:
+        detector_type: "rms" (default), "peak", ... (Tp2det_type).
+        track_preset: "distance" | "speed" | "time".
+        track_position/track_direction/track_quantity/track_start/track_stop/delta:
+            explicit overrides (leave "" to use the preset).
+    """
+    tr = _resolve_detector_track(track_preset, track_position, track_direction,
+                                 track_quantity, track_start, track_stop, delta)
+    try:
+        _open_gd()
+        steps = _apply_detector_row(row, active=active, diagram=diagram, curve=curve,
+            measurement=measurement or None, position=position or None,
+            direction=direction or None, quantity=quantity or None,
+            detector_type=detector_type or None, weighting=weighting or None,
+            sound_weighting=sound_weighting,
+            track_position=tr["track_position"] or None,
+            track_direction=tr["track_direction"] or None,
+            track_quantity=(tr["track_quantity"] if tr["track_quantity"] != "" else None),
+            track_start=tr["track_start"], track_stop=tr["track_stop"], delta=tr["delta"])
+        if output:
+            _apply_layout("standard.vas_dly", _STD_LAYOUT_TEMPLATE)
+            _ev("$gd Graphicoutput")
+            steps["graphic_output"] = True
+        return {"ok": True, "row": row, "applied": steps}
+    finally:
+        _close_gd()
+        _reset()
+
+
+@mcp.tool()
+def configure_detector_rows(rows: str, deactivate_beyond: int = 0, output: bool = True) -> dict:
+    """Configure MANY DETECTOR rows in ONE COM session, then run Graphic Output.
+
+    Each row object: row plus any of active/diagram/curve/measurement/position/
+    direction/quantity/detector_type/weighting/sound_weighting/**track_preset**/
+    track_position/track_direction/track_quantity/track_start/track_stop/delta.
+    Pick the track with ONE key: `"track_preset": "distance"` (default, 정속/pass-by,
+    Cart. coord.x -10..20) / "speed" (가속, Driving Speed 40..60) / "time". Explicit
+    track_* override the preset. Sound auto A-weighted. Non-RMS -> standard.vas_dly.
+    """
+    data = json.loads(rows) if isinstance(rows, str) else rows
+    keys = ("active", "diagram", "curve", "measurement", "position", "direction",
+            "quantity", "detector_type", "weighting", "sound_weighting")
+    try:
+        _open_gd(visible=True)
+        results = []
+        listed = set()
+        for r in data:
+            rr = dict(r); rownum = int(rr.get("row")); listed.add(rownum)
+            kw = {k: rr.get(k) for k in keys if k in rr}
+            kw.setdefault("active", True)
+            kw.setdefault("detector_type", "rms")
+            tr = _resolve_detector_track(
+                rr.get("track_preset", "distance"),
+                rr.get("track_position", ""), rr.get("track_direction", ""),
+                rr.get("track_quantity", None),
+                rr.get("track_start", ""), rr.get("track_stop", ""), rr.get("delta", ""))
+            kw["track_position"] = tr["track_position"] or None
+            kw["track_direction"] = tr["track_direction"] or None
+            kw["track_quantity"] = (tr["track_quantity"] if tr["track_quantity"] != "" else None)
+            kw["track_start"] = tr["track_start"]
+            kw["track_stop"] = tr["track_stop"]
+            kw["delta"] = tr["delta"]
+            steps = _apply_detector_row(rownum, **kw)
             results.append({"row": rownum, "applied": steps})
         if deactivate_beyond and int(deactivate_beyond) > 0:
             for rn in range(1, int(deactivate_beyond) + 1):
@@ -2905,6 +3229,436 @@ def configure_gps_rows(rows: str, deactivate_beyond: int = 0, output: bool = Tru
     finally:
         _close_gd()
         _reset()
+
+
+# --------------------------------------------------------------------------- #
+# Graphic Viewer toolbar UI automation. PAK's viewer toolbar actions (GPS map,
+# cursor mode, scale, preset, playback ...) are Qt/C++ UI only -- NOT exposed as
+# Tcl/COM commands (verified via pak_eval introspection). So they must be driven
+# by clicking the toolbar buttons via UI Automation. Run viewer_lineup() first to
+# re-align the toolbars to standard positions, then locate/click buttons.
+# --------------------------------------------------------------------------- #
+def _viewer_buttons(win):
+    """List clickable toolbar-ish controls in the Graphic Viewer, left-to-right.
+    Each: {name, autoid, ctype, rect:[l,t,r,b], _c:control}."""
+    out = []
+
+    def walk(c, d=0):
+        for ch in c.GetChildren():
+            try:
+                ct = ch.ControlTypeName
+                br = ch.BoundingRectangle
+                aid = ""
+                try:
+                    aid = ch.AutomationId or ""
+                except Exception:
+                    pass
+                if (ct in ("ButtonControl", "SplitButtonControl", "CheckBoxControl",
+                           "ComboBoxControl", "RadioButtonControl")
+                        and br.width() > 0 and br.height() > 0):
+                    out.append({"name": (ch.Name or ""), "autoid": aid, "ctype": ct,
+                                "rect": [br.left, br.top, br.right, br.bottom], "_c": ch})
+            except Exception:
+                pass
+            if d < 12:
+                walk(ch, d + 1)
+
+    walk(win)
+    out.sort(key=lambda b: (b["rect"][1] // 20, b["rect"][0]))  # row, then left
+    return out
+
+
+def _click_menuitem(auto, patterns, timeout=2.5):
+    """After a right-click, find a MenuItem whose Name matches any regex in
+    `patterns` (case-insensitive) among all popups and Invoke/click it."""
+    import time, re
+    rx = re.compile("|".join(patterns), re.I)
+    hit = [None]
+
+    def walk(c, d=0):
+        for ch in c.GetChildren():
+            try:
+                if ch.ControlTypeName in ("MenuItemControl", "ListItemControl",
+                                          "ButtonControl", "TextControl") and rx.search(ch.Name or ""):
+                    if ch.ControlTypeName != "TextControl":
+                        hit[0] = ch
+                        return
+            except Exception:
+                pass
+            if hit[0] is None and d < 8:
+                walk(ch, d + 1)
+
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        hit[0] = None
+        for w in auto.GetRootControl().GetChildren():
+            walk(w)
+            if hit[0] is not None:
+                break
+        if hit[0] is not None:
+            try:
+                hit[0].GetInvokePattern().Invoke()
+            except Exception:
+                try:
+                    hit[0].Click(simulateMove=False)
+                except Exception:
+                    return False
+            return True
+        time.sleep(0.2)
+    return False
+
+
+@mcp.tool()
+def viewer_toolbar_dump(save_png: str = "C:/MCPproject_pak/viewer_toolbar.png") -> dict:
+    """List the Graphic Viewer toolbar buttons (name/tooltip, AutomationId, type,
+    rect), left-to-right, so specific controls (GPS/map button, cursor-mode, scale,
+    preset, playback ...) can be identified. Optional screenshot to save_png.
+    READ-ONLY (no clicks). Run viewer_lineup() first for stable positions."""
+    auto, err = _import_uiautomation()
+    if auto is None:
+        return {"ok": False, "error": "uiautomation import failed: %s" % err}
+    win = _find_viewer_window(auto)
+    if not win:
+        return {"ok": False, "error": "Graphic Viewer window not found. Run a Graphic Output first."}
+    btns = _viewer_buttons(win)
+    res = [{k: b[k] for k in ("name", "autoid", "ctype", "rect")} for b in btns]
+    out = {"ok": True, "count": len(res), "buttons": res}
+    if save_png:
+        ok, info = _capture_viewer(save_png)
+        out["capture"] = info if ok else {"error": info}
+    return out
+
+
+@mcp.tool()
+def viewer_lineup() -> dict:
+    """Right-click the Graphic Viewer toolbar/menu area and click 'Line up' to
+    re-align all toolbars to their standard positions. Do this BEFORE locating or
+    clicking toolbar buttons so their positions are predictable. Requires uiautomation."""
+    auto, err = _import_uiautomation()
+    if auto is None:
+        return {"ok": False, "error": "uiautomation import failed: %s" % err}
+    import time
+    win = _find_viewer_window(auto)
+    if not win:
+        return {"ok": False, "error": "Graphic Viewer window not found. Run a Graphic Output first."}
+    try:
+        win.SetActive()
+    except Exception:
+        pass
+    time.sleep(0.3)
+    br = win.BoundingRectangle
+    # Right-click on the menu-bar strip, just right of the '?' menu (an empty area
+    # of the top band) to raise the toolbar context menu.
+    mbar = None
+    for c in win.GetChildren():
+        try:
+            if c.ControlTypeName == "MenuBarControl":
+                mbar = c
+                break
+        except Exception:
+            pass
+    if mbar is not None:
+        mb = mbar.BoundingRectangle
+        px, py = mb.right + 40, (mb.top + mb.bottom) // 2
+        if px > br.right - 5:
+            px = mb.right + 10
+    else:
+        px, py = br.left + (br.right - br.left) // 2, br.top + 55
+    auto.RightClick(px, py)
+    time.sleep(0.5)
+    ok = _click_menuitem(auto, [r"line\s*up", r"ausrichten", r"정렬"])
+    time.sleep(0.4)
+    if not ok:
+        # dismiss any open menu
+        try:
+            auto.SendKeys("{Esc}")
+        except Exception:
+            pass
+        return {"ok": False, "error": "'Line up' menu item not found after right-click.",
+                "right_click_at": [px, py]}
+    return {"ok": True, "message": "Toolbars lined up.", "right_click_at": [px, py]}
+
+
+@mcp.tool()
+def viewer_click(name: str = "", index: int = -1, right_click: bool = False,
+                 menuitem: str = "", capture: bool = False) -> dict:
+    """Click a Graphic Viewer toolbar button, identified by tooltip `name` (substring,
+    case-insensitive) OR by 0-based left-to-right `index`. Use right_click=True +
+    `menuitem` to open the button's context menu and click a menu item (substring).
+    Set capture=True to screenshot the viewer afterwards. Requires uiautomation.
+
+    Examples:
+        viewer_click(name="GPS")                 # open GPS map (if tooltip has 'GPS')
+        viewer_click(name="cursor", menuitem="double", right_click=True)
+        viewer_click(index=42)                   # click the Nth toolbar button
+    """
+    auto, err = _import_uiautomation()
+    if auto is None:
+        return {"ok": False, "error": "uiautomation import failed: %s" % err}
+    import time, re
+    win = _find_viewer_window(auto)
+    if not win:
+        return {"ok": False, "error": "Graphic Viewer window not found. Run a Graphic Output first."}
+    btns = _viewer_buttons(win)
+    target = None
+    if name:
+        rx = re.compile(re.escape(name), re.I)
+        cands = [b for b in btns if rx.search(b["name"])]
+        if not cands:
+            return {"ok": False, "error": "no toolbar button matches name %r" % name,
+                    "available": [b["name"] for b in btns if b["name"]][:60]}
+        target = cands[0]
+    elif index >= 0:
+        if index >= len(btns):
+            return {"ok": False, "error": "index %d out of range (0..%d)" % (index, len(btns) - 1)}
+        target = btns[index]
+    else:
+        return {"ok": False, "error": "provide name or index"}
+    try:
+        win.SetActive()
+    except Exception:
+        pass
+    time.sleep(0.2)
+    c = target["_c"]
+    try:
+        if right_click:
+            c.RightClick(simulateMove=False)      # context menu
+        elif menuitem:
+            c.Click(simulateMove=False)           # LEFT click opens a dropdown menu
+        else:
+            try:
+                c.GetInvokePattern().Invoke()
+            except Exception:
+                c.Click(simulateMove=False)
+        # If a menu item was requested, click it in the popup that just opened
+        # (works for both right-click context menus and left-click dropdowns like
+        # the Single/Double cursor selector).
+        if menuitem:
+            time.sleep(0.4)
+            if not _click_menuitem(auto, [re.escape(menuitem)]):
+                try:
+                    auto.SendKeys("{Esc}")
+                except Exception:
+                    pass
+                return {"ok": False, "error": "menu item %r not found" % menuitem,
+                        "clicked_button": target["name"]}
+    except Exception as e:
+        return {"ok": False, "error": "click failed: %s" % str(e).splitlines()[0][:200]}
+    time.sleep(0.5)
+    out = {"ok": True, "clicked": {"name": target["name"], "ctype": target["ctype"],
+           "rect": target["rect"]}, "right_click": bool(right_click), "menuitem": menuitem}
+    if capture:
+        ok, info = _capture_viewer("C:/MCPproject_pak/view_shot.png")
+        out["capture"] = info if ok else {"error": info}
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# GPS same-location matching. A segment is picked (via the map + cursors) on a
+# REFERENCE run; to compare the SAME road location on other-speed runs, map the
+# segment's lat/lon endpoints to each run's own time window (different speed ->
+# different times). Reads BusData NMEA + theader starttime straight from disk.
+# Works regardless of whether the later analysis uses a time or a distance axis,
+# and needs no Distance channel.
+# --------------------------------------------------------------------------- #
+def _meas_folder(dest, measurement):
+    m = (measurement or "").strip()
+    if m.endswith("]"):
+        m = m.rsplit("[", 1)[0].strip()      # drop trailing " [CP]"
+    parts = [p for p in m.replace("\\", "/").split("/") if p]
+    return os.path.join(dest.replace("\\", "/"), *parts)
+
+
+def _hav_m(la1, lo1, la2, lo2):
+    import math
+    R = 6371000.0
+    r = math.pi / 180.0
+    h = (math.sin((la2 - la1) * r / 2) ** 2
+         + math.cos(la1 * r) * math.cos(la2 * r) * math.sin((lo2 - lo1) * r / 2) ** 2)
+    return 2 * R * math.asin(math.sqrt(h))
+
+
+def _gps_points(folder):
+    """Return [[t_meas, lat, lon, kmh], ...] and the raw starttime string for a
+    measurement folder, from theader.xml (starttime) + PAK_Throughput0/mea_BusData*
+    ($GPRMC NMEA). t_meas = fix UTC - starttime (t=0 at the trigger)."""
+    import re, glob
+    from datetime import datetime, timezone
+    th = os.path.join(folder, "theader.xml")
+    with open(th, encoding="utf-8", errors="replace") as fh:
+        txt = fh.read()
+    m = re.search(r"<starttime>([^<]*)</starttime>", txt)
+    if not m:
+        raise RuntimeError("no <starttime> in %s" % th)
+    st = m.group(1)
+    dt0 = datetime.strptime(st[:14], "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+    st_s = dt0.timestamp() + (int(st[14:]) / 10 ** len(st[14:]) if st[14:] else 0.0)
+    datebase = st[:8]
+    bus = sorted(glob.glob(os.path.join(folder, "PAK_Throughput0", "mea_BusData*")))
+    if not bus:
+        raise RuntimeError("no PAK_Throughput0/mea_BusData* in %s" % folder)
+    raw = open(bus[0], "rb").read().decode("latin-1")
+
+    def latf(v, h):
+        d = int(v[:2]); mm = float(v[2:]); x = d + mm / 60.0
+        return -x if h in ("S", "s") else x
+
+    def lonf(v, h):
+        d = int(v[:3]); mm = float(v[3:]); x = d + mm / 60.0
+        return -x if h in ("W", "w") else x
+
+    pts = []
+    for line in re.findall(r"\$GPRMC[^*]*\*[0-9A-Fa-f]{2}", raw):
+        f = line.split(",")
+        if len(f) < 10 or f[2] != "A":
+            continue
+        try:
+            sec = f[1].split(".")
+            dt = datetime.strptime(datebase + sec[0].zfill(6), "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+            futc = dt.timestamp() + (float("0." + sec[1]) if len(sec) > 1 else 0.0)
+            pts.append([round(futc - st_s, 3), latf(f[3], f[4]), lonf(f[5], f[6]),
+                        round(float(f[7]) * 1.852, 2) if f[7] else 0.0])
+        except Exception:
+            continue
+    if not pts:
+        raise RuntimeError("no valid $GPRMC fixes in %s" % bus[0])
+    return pts, st
+
+
+@mcp.tool()
+def gps_match_segment(ref_measurement: str, t1: float, t2: float,
+                      target_measurements: str) -> dict:
+    """Map a GPS segment picked on a REFERENCE run to the SAME geographic location in
+    other runs (different speed -> different time window). Feed the result straight
+    into output_rms / configure_*_rows (track_start/track_stop) for same-location
+    comparison across speeds. Needs no Distance channel; works for time- or
+    distance-axis analysis.
+
+    How: reads each measurement's BusData NMEA ($GPRMC) + theader `starttime` from disk
+    to build (measurement-time, lat, lon). Gets the reference segment's endpoints A(t1)
+    /B(t2) lat/lon, then for each target finds the times whose lat/lon are nearest A
+    and B (reports the match distance in metres so you can sanity-check).
+
+    Args:
+        ref_measurement: measurement the segment was picked on, e.g. "GPSDATA/100_GPS".
+        t1, t2: segment start/end seconds (t=0 at trigger; from read_viewer_cursors).
+        target_measurements: JSON list, e.g. '["GPSDATA/80_GPS","GPSDATA/120_GPS"]'.
+
+    Returns: ref A/B (t,lat,lon) and per-target {track_start, track_stop, match_m:{A,B}}.
+    A match_m of a few metres = same location (GPS/fix resolution); tens of metres or
+    more means the target may not cover that spot — check before trusting it.
+    """
+    import json as _json
+    try:
+        _ensure_sourced()
+        _ev("set reference [createobject $pak_application]")
+        try:
+            _ev("set browser [$reference Browser]")
+            dest = _ev("$browser DestDataPath")
+        finally:
+            _ev("catch {release $browser}; unset browser")
+            _ev("catch {release $reference}; unset reference")
+        targets = _json.loads(target_measurements) if isinstance(target_measurements, str) else target_measurements
+        rp, rst = _gps_points(_meas_folder(dest, ref_measurement))
+
+        def at(pts, tt):
+            return min(pts, key=lambda p: abs(p[0] - tt))
+
+        A = at(rp, float(t1)); B = at(rp, float(t2))
+        out = {"ok": True, "data_path": dest,
+               "ref": {"measurement": ref_measurement,
+                       "A": {"t": A[0], "lat": round(A[1], 6), "lon": round(A[2], 6)},
+                       "B": {"t": B[0], "lat": round(B[1], 6), "lon": round(B[2], 6)}},
+               "targets": []}
+        for tg in targets:
+            try:
+                tp, _ = _gps_points(_meas_folder(dest, tg))
+                pa = min(tp, key=lambda p: _hav_m(p[1], p[2], A[1], A[2]))
+                pb = min(tp, key=lambda p: _hav_m(p[1], p[2], B[1], B[2]))
+                da = _hav_m(pa[1], pa[2], A[1], A[2]); db = _hav_m(pb[1], pb[2], B[1], B[2])
+                lo, hi = sorted([pa[0], pb[0]])
+                out["targets"].append({
+                    "measurement": tg,
+                    "track_start": round(lo, 3), "track_stop": round(hi, 3),
+                    "match_m": {"A": round(da, 1), "B": round(db, 1)},
+                    "A_t": pa[0], "B_t": pb[0]})
+            except Exception as e:
+                out["targets"].append({"measurement": tg, "error": str(e).splitlines()[0][:200]})
+        return out
+    except Exception as e:
+        return {"ok": False, "error": str(e).splitlines()[0][:300]}
+
+
+@mcp.tool()
+def open_gps_map(capture: bool = False) -> dict:
+    """Open the PAK GPS Map Viewer by clicking the 'Open map' button (the GPS icon at
+    the right end of the Graphic Viewer toolbar). Run a Graphic Output first so the
+    Graphic Viewer is open. The map is time + coordinate synced with the data: select
+    a segment on it, then call read_viewer_cursors() to get t1/t2 for windowed
+    analysis (e.g. output_rms track_start/track_stop). Uses exact-name matching on the
+    button (avoids the 'single/double cursor' substring collision). Requires uiautomation."""
+    auto, err = _import_uiautomation()
+    if auto is None:
+        return {"ok": False, "error": "uiautomation import failed: %s" % err}
+    import time
+    win = _find_viewer_window(auto)
+    if not win:
+        return {"ok": False, "error": "Graphic Viewer window not found. Run a Graphic Output first."}
+    target = None
+    for b in _viewer_buttons(win):
+        if (b["name"] or "").strip().lower() == "open map":
+            target = b
+            break
+    if target is None:
+        return {"ok": False, "error": "'Open map' button not found (try viewer_lineup first)."}
+    try:
+        win.SetActive()
+    except Exception:
+        pass
+    time.sleep(0.2)
+    try:
+        target["_c"].GetInvokePattern().Invoke()
+    except Exception:
+        target["_c"].Click(simulateMove=False)
+    time.sleep(0.4)
+    out = {"ok": True, "message": "Clicked 'Open map' -- GPS Map Viewer opened.",
+           "button_rect": target["rect"]}
+    if capture:
+        ok, info = _capture_viewer("C:/MCPproject_pak/view_shot.png")
+        out["capture"] = info if ok else {"error": info}
+    return out
+
+
+@mcp.tool()
+def pak_eval(script: str, in_pak: bool = True) -> dict:
+    """DEBUG / introspection: evaluate an arbitrary Tcl `script`.
+
+    The PAK COM object exposes essentially one method -- EvalTclScript -- so ALL PAK
+    automation is Tcl. This tool sends `script` to be evaluated INSIDE the running PAK
+    interpreter (in_pak=True, via `$reference EvalTclScript`) and returns the result
+    string; set in_pak=False to run it in the local client interpreter instead.
+
+    Use it to discover PAK's internal commands, e.g.:
+        script="info commands *ap*"      # map / playback ...
+        script="info commands *eom*"     # geom / geometry
+        script="info procs *arte*"       # Karte (German = map)
+        script="info commands *iew*"     # view / viewer
+    then, if a map-opening command is found, call it directly (no UI click).
+    """
+    try:
+        _ensure_sourced()
+        if in_pak:
+            _ev("set reference [createobject $pak_application]")
+            try:
+                res = _ev("$reference EvalTclScript %s" % _brace(script))
+            finally:
+                _ev("catch {release $reference}; unset reference")
+        else:
+            res = _ev(script)
+        return {"ok": True, "in_pak": bool(in_pak), "script": script, "result": res}
+    except Exception as e:
+        return {"ok": False, "in_pak": bool(in_pak), "script": script,
+                "error": str(e).splitlines()[0][:300]}
 
 
 if __name__ == "__main__":

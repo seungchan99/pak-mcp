@@ -192,9 +192,9 @@
     </zscales>
    </diagram>
   </Defaults>
-  <LayoutAttributes fontfactor="1.25" layoutversion="223" mode="dynamic" pakversion="6.4">
+  <LayoutAttributes fontfactor="1.75" layoutversion="223" mode="dynamic" pakversion="6.4">
    <background color="#FFFFFF" texture=""/>
-   <display height_mm="300" height_px="1440" width_mm="530" width_px="2560"/>
+   <display height_mm="210" height_px="2160" width_mm="336" width_px="3456"/>
    <grid x="500" y="500"/>
    <ruler x="500" y="500"/>
    <size height="21000" width="29700"/>
@@ -403,7 +403,7 @@
      </zscales>
     </diagram>
     <text diagauto="1" x1="3250" y1="2282">
-     <text>&lt;table&gt;&amp;#10;&amp;#9;&lt;tr&gt;&amp;#10;&amp;#9;&amp;#9;&lt;td&gt;&amp;#10;&amp;#9;&amp;#9;&amp;#9;&lt;font name=&quot;Tahoma&quot; size=&quot;9&quot;&gt;&lt;var curve=&quot;*&quot;&gt;legend&lt;/var&gt;&lt;/font&gt;&amp;#10;&amp;#9;&amp;#9;&lt;/td&gt;&amp;#10;&amp;#9;&amp;#9;&lt;td&gt;&amp;#10;&amp;#9;&amp;#9;&amp;#9;&lt;font name=&quot;Tahoma&quot; size=&quot;9&quot;&gt;&lt;var curve=&quot;*&quot; category=&quot;subtitle&quot;&gt;datasource&lt;/var&gt;&lt;/font&gt;&amp;#10;&amp;#9;&amp;#9;&lt;/td&gt;&amp;#10;&amp;#9;&amp;#9;&lt;td&gt;&amp;#10;&amp;#9;&amp;#9;&amp;#9;&lt;font name=&quot;Tahoma&quot; size=&quot;9&quot;&gt;&lt;var curve=&quot;*&quot;&gt;pos&lt;/var&gt; &lt;var curve=&quot;*&quot;&gt;pos_dir&lt;/var&gt;&lt;/font&gt;&amp;#10;&amp;#9;&amp;#9;&lt;/td&gt;&amp;#10;&amp;#9;&lt;/tr&gt;&amp;#10;&lt;/table&gt;</text>
+     <text>&lt;table&gt;&amp;#10;&amp;#9;&lt;tr&gt;&amp;#10;&amp;#9;&amp;#9;&lt;td&gt;&amp;#10;&amp;#9;&amp;#9;&amp;#9;&lt;font name=&quot;Tahoma&quot; size=&quot;5&quot;&gt;&lt;var curve=&quot;*&quot;&gt;legend&lt;/var&gt;&lt;/font&gt;&amp;#10;&amp;#9;&amp;#9;&lt;/td&gt;&amp;#10;&amp;#9;&amp;#9;&lt;td/&gt;&amp;#10;&amp;#9;&amp;#9;&lt;td&gt;&amp;#10;&amp;#9;&amp;#9;&amp;#9;&lt;font name=&quot;Tahoma&quot; size=&quot;5&quot;&gt;&lt;var curve=&quot;*&quot;&gt;pos&lt;/var&gt; &lt;var curve=&quot;*&quot;&gt;pos_dir&lt;/var&gt;&lt;/font&gt;&amp;#10;&amp;#9;&amp;#9;&lt;/td&gt;&amp;#10;&amp;#9;&amp;#9;&lt;td&gt;&amp;#10;&amp;#9;&amp;#9;&amp;#9;&lt;font name=&quot;Tahoma&quot; size=&quot;5&quot;&gt;&lt;var curve=&quot;*&quot; category=&quot;subtitle&quot;&gt;datasource&lt;/var&gt;&lt;/font&gt;&amp;#10;&amp;#9;&amp;#9;&lt;/td&gt;&amp;#10;&amp;#9;&amp;#9;&lt;td&gt;&amp;#10;&amp;#9;&amp;#9;&amp;#9;&lt;font name=&quot;Tahoma&quot; size=&quot;5&quot;&gt;&lt;var curve=&quot;*&quot;&gt;plot_datatype&lt;/var&gt;&lt;/font&gt;&amp;#10;&amp;#9;&amp;#9;&lt;/td&gt;&amp;#10;&amp;#9;&lt;/tr&gt;&amp;#10;&lt;/table&gt;</text>
     </text>
    </Objects>
    <Objects level="3d">
@@ -490,8 +490,8 @@
       </scale>
      </zscales>
     </diagram>
-    <text x1="14938" y1="2563">
-     <text>&lt;table&gt;&amp;#10;&amp;#9;&lt;tr&gt;&amp;#10;&amp;#9;&amp;#9;&lt;td&gt;&amp;#10;&amp;#9;&amp;#9;&amp;#9;&lt;font name=&quot;Tahoma&quot; size=&quot;9&quot;&gt;&lt;var curve=&quot;*&quot;&gt;legend&lt;/var&gt;&lt;/font&gt;&amp;#10;&amp;#9;&amp;#9;&lt;/td&gt;&amp;#10;&amp;#9;&amp;#9;&lt;td&gt;&amp;#10;&amp;#9;&amp;#9;&amp;#9;&lt;font name=&quot;Tahoma&quot; size=&quot;9&quot;&gt;&lt;var curve=&quot;*&quot; category=&quot;subtitle&quot;&gt;datasource&lt;/var&gt;&lt;/font&gt;&amp;#10;&amp;#9;&amp;#9;&lt;/td&gt;&amp;#10;&amp;#9;&amp;#9;&lt;td&gt;&amp;#10;&amp;#9;&amp;#9;&amp;#9;&lt;font name=&quot;Tahoma&quot; size=&quot;9&quot;&gt;&lt;var curve=&quot;*&quot;&gt;pos&lt;/var&gt; &lt;var curve=&quot;*&quot;&gt;pos_dir&lt;/var&gt;&lt;/font&gt;&amp;#10;&amp;#9;&amp;#9;&lt;/td&gt;&amp;#10;&amp;#9;&lt;/tr&gt;&amp;#10;&lt;/table&gt;</text>
+    <text diagauto="1" x1="3469" y1="2470">
+     <text>&lt;table&gt;&amp;#10;&amp;#9;&lt;tr&gt;&amp;#10;&amp;#9;&amp;#9;&lt;td&gt;&amp;#10;&amp;#9;&amp;#9;&amp;#9;&lt;font name=&quot;Tahoma&quot; size=&quot;7&quot;&gt;&lt;var curve=&quot;*&quot;&gt;legend&lt;/var&gt;&lt;/font&gt;&amp;#10;&amp;#9;&amp;#9;&lt;/td&gt;&amp;#10;&amp;#9;&amp;#9;&lt;td&gt;&amp;#10;&amp;#9;&amp;#9;&amp;#9;&lt;font name=&quot;Tahoma&quot; size=&quot;7&quot;&gt;&lt;var curve=&quot;*&quot; category=&quot;subtitle&quot;&gt;datasource&lt;/var&gt;&lt;/font&gt;&amp;#10;&amp;#9;&amp;#9;&lt;/td&gt;&amp;#10;&amp;#9;&amp;#9;&lt;td&gt;&amp;#10;&amp;#9;&amp;#9;&amp;#9;&lt;font name=&quot;Tahoma&quot; size=&quot;7&quot;&gt;&lt;var curve=&quot;*&quot;&gt;pos&lt;/var&gt; &lt;var curve=&quot;*&quot;&gt;pos_dir&lt;/var&gt;&lt;/font&gt;&amp;#10;&amp;#9;&amp;#9;&lt;/td&gt;&amp;#10;&amp;#9;&lt;/tr&gt;&amp;#10;&lt;/table&gt;</text>
     </text>
    </Objects>
    <Objects level="4d">

@@ -20,7 +20,21 @@ rms_export/
 *.jpeg
 *.pptx
 *.docx
+*.mp4
+*.mov
+*.avi
 ~$*
+
+# --- Dev probe/scan/test scripts (not part of the distributed servers) ---
+pak_*probe*.py
+pak_*scan*.py
+pak_*test*.py
+pak2_*.py
+
+# --- Work-in-progress / dev folders ---
+개발중/
+dev/
+wip/
 
 # --- Python ---
 __pycache__/

@@ -1,0 +1,35 @@
+{
+  "manifest_version": "0.2",
+  "name": "pak-mcp",
+  "display_name": "PAK MCP (Graphic Definition)",
+  "version": "0.1.0",
+  "description": "Drive Muller-BBM PAK Graphic Definition + Graphic Output from an LLM (band-pass RMS, APS/Octave/Overall/Order analyses).",
+  "author": { "name": "PAK System Co., Ltd." },
+  "license": "MIT",
+  "keywords": ["mcp", "nvh", "pak", "acoustics", "vibration"],
+  "server": {
+    "type": "python",
+    "entry_point": "pak_graphdef_mcp.py",
+    "mcp_config": {
+      "command": "python",
+      "args": ["${__dirname}/pak_graphdef_mcp.py"],
+      "env": {
+        "PAK_PROGID": "Pak.Application.1",
+        "PAK_TCL_INIT": "${user_config.pak_tcl_init}"
+      }
+    }
+  },
+  "user_config": {
+    "pak_tcl_init": {
+      "type": "string",
+      "title": "PAK Tcl init path",
+      "description": "Path to PAK's Tcl init file",
+      "default": "C:/Program Files/MuellerBBM-VAS/PAK 6.4/tcl/pak_library/clnt/init.tcl",
+      "required": false
+    }
+  },
+  "compatibility": {
+    "platforms": ["win32"],
+    "python": ">=3.10"
+  }
+}

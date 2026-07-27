@@ -13,14 +13,6 @@
       "env": {
         "PAK_PROGID": "Pak.Application.1"
       }
-    },
-    "PAK_Arithmetic": {
-      "command": "python",
-      "args": ["C:\\path\\to\\pak_arithmetic_mcp.py"],
-      "env": {
-        "PAK_PROGID": "Pak.Application.1",
-        "PAK_TCL_INIT": "C:/Program Files/MuellerBBM-VAS/PAK 6.4/tcl/pak_library/clnt/init.tcl"
-      }
     }
   }
 }
