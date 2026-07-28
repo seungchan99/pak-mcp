@@ -1252,33 +1252,48 @@ def graphdef_name() -> dict:
 # The RMS values render as a table on the graph; capture it as an image to read.
 # --------------------------------------------------------------------------- #
 def _capture_viewer(png_path):
-    """Screenshot the Graphic Viewer window to png_path. Needs pillow+uiautomation.
-    Returns (ok, info)."""
+    """Screenshot the Graphic Viewer window to png_path. Needs pillow + uiautomation
+    on a Windows session WITH a visible desktop (i.e. the local desktop MCP host --
+    Claude Desktop / Cowork). Never raises: on any failure it returns a friendly,
+    actionable message so the caller's analysis/render still succeeds and only the
+    screenshot is skipped. Returns (ok, info): info is a dict on success, a guidance
+    string on failure. Capture is NOT available in web/mobile chat (no local tools)."""
     try:
         import time
         import uiautomation as auto
         from PIL import ImageGrab
     except Exception as e:
-        return False, "pillow/uiautomation missing: %s" % e
-    win = None
-    for w in auto.GetRootControl().GetChildren():
+        return False, ("Screen capture skipped: needs 'pillow' + 'uiautomation' on a "
+                       "Windows session with a display. Install with: "
+                       "pip install pillow uiautomation. Analysis/render still completed "
+                       "-- only the screenshot was skipped. (%s)" % e)
+    try:
+        win = None
+        for w in auto.GetRootControl().GetChildren():
+            try:
+                if w.ControlTypeName == "WindowControl" and "graphic viewer" in (w.Name or "").lower():
+                    win = w
+                    break
+            except Exception:
+                pass
+        if not win:
+            return False, ("Screen capture skipped: PAK 'Graphic Viewer' window not found. "
+                           "Run Graphic Output so the viewer is open on a visible Windows "
+                           "desktop, then capture. (Not available in web/mobile chat -- "
+                           "capture needs the local desktop MCP host.)")
         try:
-            if w.ControlTypeName == "WindowControl" and "graphic viewer" in (w.Name or "").lower():
-                win = w
-                break
+            win.SetActive()
         except Exception:
             pass
-    if not win:
-        return False, "Graphic Viewer window not found"
-    try:
-        win.SetActive()
-    except Exception:
-        pass
-    time.sleep(0.6)
-    r = win.BoundingRectangle
-    img = ImageGrab.grab(bbox=(r.left, r.top, r.right, r.bottom), all_screens=True)
-    img.save(png_path)
-    return True, {"path": png_path, "size": list(img.size)}
+        time.sleep(0.6)
+        r = win.BoundingRectangle
+        img = ImageGrab.grab(bbox=(r.left, r.top, r.right, r.bottom), all_screens=True)
+        img.save(png_path)
+        return True, {"path": png_path, "size": list(img.size)}
+    except Exception as e:
+        return False, ("Screen capture skipped: could not grab the viewer window "
+                       "(headless session or no display?). Analysis/render still "
+                       "completed. (%s)" % e)
 
 
 @mcp.tool()
