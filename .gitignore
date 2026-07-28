@@ -53,3 +53,9 @@ env/
 Thumbs.db
 .vscode/
 .idea/
+
+# --- run_analysis runtime sidecars + temp row-JSON (not distributed) ---
+run_analysis_progress.json
+run_analysis_result.json
+_*.json
+view_shot.png

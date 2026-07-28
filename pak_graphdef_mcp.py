@@ -2666,6 +2666,192 @@ def configure_detector_rows(rows: str, deactivate_beyond: int = 0, output: bool 
 
 
 # --------------------------------------------------------------------------- #
+# CHAINED PIPELINE.  run_analysis collapses reset -> configure many rows (mixed
+# analysis families) -> layout -> Graphic Output -> screenshot -> server-side
+# verification into ONE MCP call / one COM session. This is the "workflow
+# chaining" step: it removes the per-step LLM round-trips (the dominant cost of
+# a multi-analysis request) and folds the readback checks in, so the LLM only
+# needs to Read the final screenshot.
+# --------------------------------------------------------------------------- #
+@mcp.tool()
+def run_analysis(rows: str, layout: str = "standard.vas_dly",
+                 deactivate_beyond: int = 0, capture: bool = True,
+                 capture_path: str = "C:/MCPProject_pak/view_shot.png") -> dict:
+    """CHAINED analysis pipeline in ONE call: configure many rows (families may be
+    mixed across rows) -> apply layout -> Graphic Output -> screenshot ->
+    server-side verification. Replaces the sequence reset_graphdef +
+    configure_*_rows + graphic_output + capture_viewer with a single round-trip.
+
+    rows: JSON list. Each object needs "row" (1-based) and "analysis", plus that
+    family's params:
+      analysis="aps"          -> position/direction/quantity + measurement (+ optional
+                                 sampling_rate/blocksize/x_from/x_to). Defaults:
+                                 measurement_data_type="Throughput", graphic_data_type="APS".
+      analysis="octave"       -> ...+ fraction (e.g. "1/3"); stat_parameter default "Average [Q]".
+      analysis="overall"      -> full level vs time/RPM; track_position/track_quantity + delta.
+      analysis="orderaps"     -> ...+ max_order, rpm_position/rpm_direction/rpm_quantity, delta.
+      analysis="ordercomplex" -> ...+ order, max_order, rpm_*.
+      analysis="detector"     -> exterior LH/RH; pick the track with ONE key
+                                 "track_preset": "distance"(default,정속/pass-by) /
+                                 "speed"(가속) / "time". Explicit track_* override it.
+    Sound Pressure channels are ALWAYS A-weighted automatically; vibration stays
+    linear. Band-pass RMS tables are NOT handled here -- use output_rms (it owns the
+    RMS.vas_dly layout + sum-level table). layout="none" skips the layout step.
+
+    Returns: per-row `applied` steps, a `verification` list (weighting + resolved
+    track per row) with `warnings` (sound not A-weighted, track fell back to Time),
+    and `capture` path -- Read that PNG for the final visual check.
+    """
+    data = json.loads(rows) if isinstance(rows, str) else rows
+
+    APS_KEYS = ("active", "diagram", "curve", "measurement", "position", "direction",
+                "quantity", "measurement_data_type", "graphic_data_type", "sampling_rate",
+                "blocksize", "track_quantity", "track_position", "track_direction",
+                "track_start", "track_stop", "weighting", "stat_parameter",
+                "x_from", "x_to", "x_type", "y_type", "y_from", "y_to")
+    OCT_KEYS = ("active", "diagram", "curve", "measurement", "position", "direction",
+                "quantity", "fraction", "weighting", "sound_weighting", "stat_parameter",
+                "delta", "track_start", "track_stop")
+    OA_KEYS = ("active", "diagram", "curve", "measurement", "position", "direction",
+               "quantity", "blocksize", "track_position", "track_direction",
+               "track_quantity", "delta", "track_start", "track_stop", "weighting",
+               "sound_weighting")
+    OAPS_KEYS = ("active", "diagram", "curve", "measurement", "position", "direction",
+                 "quantity", "blocksize", "max_order", "rpm_position", "rpm_direction",
+                 "rpm_quantity", "delta", "track_start", "track_stop", "x_from", "x_to",
+                 "weighting", "sound_weighting")
+    OCX_KEYS = OAPS_KEYS + ("order",)
+    DET_KEYS = ("active", "diagram", "curve", "measurement", "position", "direction",
+                "quantity", "detector_type", "weighting", "sound_weighting")
+
+    try:
+        _open_gd(visible=True)   # _open_gd() resets lingering COM handles first
+        results = []
+        listed = set()
+        for r in data:
+            rr = dict(r)
+            rownum = int(rr.get("row"))
+            listed.add(rownum)
+            fam = str(rr.get("analysis", "aps")).lower().replace(" ", "").replace("_", "")
+            if fam in ("aps", "fft", "2daps", "3daps"):
+                kw = {k: rr.get(k) for k in APS_KEYS if k in rr}
+                kw.setdefault("active", True)
+                kw.setdefault("measurement_data_type", "Throughput")
+                kw.setdefault("graphic_data_type", "APS")
+                steps = _apply_row(rownum, **kw)
+            elif fam in ("octave", "oct", "1/3octave", "1/1octave"):
+                kw = {k: rr.get(k) for k in OCT_KEYS if k in rr}
+                kw.setdefault("active", True)
+                steps = _apply_octave_row(rownum, **kw)
+            elif fam in ("overall", "oa", "sumlevel"):
+                kw = {k: rr.get(k) for k in OA_KEYS if k in rr}
+                kw.setdefault("active", True)
+                steps = _apply_overall_row(rownum, **kw)
+            elif fam in ("orderaps", "order"):
+                kw = {k: rr.get(k) for k in OAPS_KEYS if k in rr}
+                kw.setdefault("active", True)
+                steps = _apply_orderaps_row(rownum, **kw)
+            elif fam in ("ordercomplex",):
+                kw = {k: rr.get(k) for k in OCX_KEYS if k in rr}
+                kw.setdefault("active", True)
+                steps = _apply_ordercomplex_row(rownum, **kw)
+            elif fam in ("detector", "det", "exterior"):
+                kw = {k: rr.get(k) for k in DET_KEYS if k in rr}
+                kw.setdefault("active", True)
+                kw.setdefault("detector_type", "rms")
+                tr = _resolve_detector_track(
+                    rr.get("track_preset", "distance"),
+                    rr.get("track_position", ""), rr.get("track_direction", ""),
+                    rr.get("track_quantity", None),
+                    rr.get("track_start", ""), rr.get("track_stop", ""), rr.get("delta", ""))
+                kw["track_position"] = tr["track_position"] or None
+                kw["track_direction"] = tr["track_direction"] or None
+                kw["track_quantity"] = (tr["track_quantity"] if tr["track_quantity"] != "" else None)
+                kw["track_start"] = tr["track_start"]
+                kw["track_stop"] = tr["track_stop"]
+                kw["delta"] = tr["delta"]
+                steps = _apply_detector_row(rownum, **kw)
+            elif fam in ("rms", "bandrms"):
+                results.append({"row": rownum, "analysis": fam,
+                                "error": "RMS 밴드표는 output_rms 도구를 쓰세요 (RMS.vas_dly + 표)."})
+                continue
+            else:
+                results.append({"row": rownum, "analysis": fam,
+                                "error": "unknown analysis '%s'" % fam})
+                continue
+            results.append({"row": rownum, "analysis": fam, "applied": steps})
+            # progress sidecar: lets a long/timed-out call be observed + confirmed
+            try:
+                _pf = os.path.join(os.path.dirname(capture_path) or ".", "run_analysis_progress.json")
+                with open(_pf, "w", encoding="utf-8") as _fh:
+                    json.dump({"configured_rows": len(results), "total": len(data),
+                               "last_row": rownum, "done": False}, _fh, ensure_ascii=False)
+            except Exception:
+                pass
+
+        if deactivate_beyond and int(deactivate_beyond) > 0:
+            for rn in range(1, int(deactivate_beyond) + 1):
+                if rn not in listed:
+                    _ev("set it [$gd Item %d]" % (rn - 1))
+                    _ev("$it Active 0")
+                    _ev("catch {release $it}; unset it")
+
+        if layout and str(layout).lower() not in ("none", ""):
+            _apply_layout(layout, _STD_LAYOUT_TEMPLATE)
+        _ev("$gd Graphicoutput")
+
+        # ---- server-side verification (readback echoes already inside steps) ----
+        verification = []
+        warnings = []
+        for res in results:
+            st = res.get("applied")
+            if not isinstance(st, dict):
+                continue
+            wt = st.get("weighting")
+            track = st.get("track") if isinstance(st.get("track"), dict) else {}
+            tq = track.get("quantity")
+            ch = st.get("channel") if isinstance(st.get("channel"), dict) else {}
+            q = (ch.get("quantity") or "").lower()
+            verification.append({"row": res["row"], "analysis": res["analysis"],
+                                 "weighting": wt, "track_quantity": tq})
+            if ("sound" in q or "pressure" in q) and wt and str(wt).lower() != "a":
+                warnings.append("row %s: sound channel not A-weighted (got %r)" % (res["row"], wt))
+            if isinstance(tq, str) and ("not set" in tq.lower() or "time?" in tq.lower()):
+                warnings.append("row %s: track fell back (%s) -- check track_preset/quantity" % (res["row"], tq))
+
+        out = {"ok": True, "rows": results, "verification": verification,
+               "warnings": warnings, "deactivated_beyond": int(deactivate_beyond or 0),
+               "layout": layout}
+        if capture:
+            ok, info = _capture_viewer(capture_path)
+            out["capture_ok"] = bool(ok)
+            out["capture"] = info if ok else {"error": info}
+            out["next"] = "Read the screenshot at %s for the final visual check." % capture_path
+        # result sidecar: written even if the MCP client already timed out (PAK finishes
+        # regardless), so a big single call can be confirmed by reading this file + the PNG.
+        try:
+            import time as _time
+            _rf = os.path.join(os.path.dirname(capture_path) or ".", "run_analysis_result.json")
+            _payload = dict(out)
+            _payload["timestamp"] = _time.strftime("%Y-%m-%d %H:%M:%S")
+            _payload["done"] = True
+            with open(_rf, "w", encoding="utf-8") as _fh:
+                json.dump(_payload, _fh, ensure_ascii=False, indent=2)
+            out["result_file"] = _rf
+            _pf = os.path.join(os.path.dirname(capture_path) or ".", "run_analysis_progress.json")
+            with open(_pf, "w", encoding="utf-8") as _fh:
+                json.dump({"configured_rows": len(results), "total": len(results),
+                           "last_row": (results[-1]["row"] if results else None), "done": True},
+                          _fh, ensure_ascii=False)
+        except Exception:
+            pass
+        return out
+    finally:
+        _close_gd()
+        _reset()
+
+
+# --------------------------------------------------------------------------- #
 # RMS layout auto-generation.  AutoFormat folder = RMS value-table layouts
 # (distinct from PlotEditor = analysis definitions). The RMS.vas_dly template is
 # plain XML; we write it verbatim, optionally resizing the table font (Malgun

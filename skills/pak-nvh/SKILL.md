@@ -350,6 +350,42 @@ CAN/slow 채널(토크 CH66, RPM CH65, 차속, 온도 등)을 시간축 값 트�
 - 적용 범위: 토크/RPM/속도/온도/RMS 등 **물리 채널 한정**. 소음(dB(A))·차수 스펙트럼은
   종전대로 dB 유지.
 
+## 체이닝 도구 `run_analysis` (대량/다중 분석 한 번에)
+
+`run_analysis`는 `reset → 여러 행 구성(패밀리 혼합 가능) → 레이아웃 → Graphic Output → 캡처 → 서버 검증`을
+**한 번의 호출**로 묶는 체이닝 도구다. `configure_*_rows` + `graphic_output` + `capture_viewer`를 매번 따로 부르는
+왕복을 없애 다중 분석 요청을 빠르게 처리한다.
+
+**언제 쓰나 (선택 도구, 자동 아님):**
+- **여러 행/여러 분석을 한 번에 렌더** → `run_analysis` 권장 (기본값으로 삼아도 됨).
+- **RMS 밴드표는 여기서 하지 않는다** → 반드시 `output_rms` (RMS.vas_dly 레이아웃 + Sum level 표는 그 도구 전용).
+- 단순 단일 구성은 기존 `configure_*`도 그대로 가능.
+
+**rows JSON**: 각 객체에 `row`(1-based) + `analysis` + 그 패밀리 인자.
+`analysis` = `aps` / `octave`(+`fraction`) / `overall` / `orderaps` / `ordercomplex`(+`order`) /
+`detector`(+`track_preset` distance/speed/time). 소음(Sound Pressure)은 자동 A-weight(dB(A)), 진동은 선형 유지.
+`layout="none"`이면 레이아웃 단계 생략.
+
+**응답**: 행별 `applied`, `verification`(행별 weighting·track), `warnings`(소음인데 A 아님·track이 Time으로 튕김),
+`capture` 경로.
+
+### 대량 실행 + sidecar 완결 확인 (2단 검증)
+
+60행처럼 큰 작업을 **단일 호출**하면 계산 시간이 길어 **MCP 응답이 타임아웃**날 수 있다. 하지만 **PAK는 끝까지
+정상 렌더**하므로 타임아웃은 실패가 아니다. `run_analysis`는 캡처 폴더에 결과를 파일로 남기니 이렇게 확인한다:
+
+- `run_analysis_progress.json` — 진행(구성 행수 / total / `done`).
+- `run_analysis_result.json` — 최종 결과(`ok`/`done:true`, `verification`, `warnings`, `capture` 경로, timestamp).
+
+**2단 검증 절차 (대량 run_analysis 후):**
+1. **완결·검증값 확인 = `run_analysis_result.json` 읽기** — `done:true`인지, `verification`의 weighting이 소음=A·진동=lin인지,
+   `warnings`가 비었는지. (이게 "항목 결과" 확인이며, 캡처가 아니라 서버 계산 검증값이다.)
+2. **시각 확인 = 캡처 PNG 읽기** — `result.json`의 `capture.path`에 있는 이미지를 열어 범례·축·곡선이 기대와 맞는지.
+
+**실행 패턴 선택:**
+- 빠른 확인이 필요하면 **15~20행씩 청크**로 여러 번 호출(각 호출이 응답까지 옴; 마지막만 `capture=true`).
+- 크게 한 방에 돌리려면 **단일 호출** 후 위 2단 절차로 확인. 두 방식 결과는 동일하다.
+
 ## Other analyses (not RMS)
 
 - Standard APS spectra (single curve per diagram): `configure_rows` (auto 32768 /
