@@ -14,6 +14,17 @@ PAK_broswer.txt
 *.uf
 rms_export/
 
+# --- Runtime sidecar outputs (run_analysis, etc.) ---
+run_analysis_*.json
+*_progress.json
+*_result.json
+
+# --- Personal run_analysis input row configs (project-specific, not shipped) ---
+_ra_*.json
+_ordvib*.json
+*_rows.json
+rows*.json
+
 # --- Output artifacts ---
 *.png
 *.jpg
