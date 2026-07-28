@@ -1,1 +1,7 @@
 mcp>=1.2.0
+
+# Screen capture of the PAK Graphic Viewer (output_rms / run_analysis / capture_viewer).
+# Windows-only: uiautomation drives the local desktop UI, so it is installed only on
+# Windows. On other OSes capture is simply skipped (the tools degrade gracefully).
+pillow>=9.0
+uiautomation>=2.0; platform_system == "Windows"
