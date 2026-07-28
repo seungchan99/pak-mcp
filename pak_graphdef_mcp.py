@@ -1309,6 +1309,38 @@ def capture_viewer(path: str = "C:/MCPproject_pak/view_shot.png") -> dict:
     return {"ok": False, "error": info}
 
 
+def _capture_inline(path):
+    """Capture the viewer, then read the PNG bytes SERVER-SIDE and wrap them as an MCP
+    Image so the screenshot renders INLINE in the chat -- no client file-path access
+    needed (fixes 'path not accessible' in the plain chat client). Returns
+    (image_or_None, info): image is an mcp Image on success, else None with a message.
+    The server can always read the file it just wrote even when the client cannot."""
+    ok, info = _capture_viewer(path)
+    if not ok:
+        return None, info
+    try:
+        from mcp.server.fastmcp import Image
+        with open(path, "rb") as _fh:
+            data = _fh.read()
+        return Image(data=data, format="png"), info
+    except Exception as e:
+        return None, ("capture saved to %s but inline image unavailable on this MCP SDK "
+                      "(%s); read the file instead." % (path, e))
+
+
+@mcp.tool()
+def capture_viewer_inline(path: str = "C:/MCPProject_pak/view_shot.png"):
+    """Screenshot the PAK Graphic Viewer and return it as an INLINE image in the
+    response (base64), so it shows directly in chat WITHOUT the client needing to open
+    the saved file. Use this when the client cannot access the capture folder (e.g. the
+    plain chat client reports the path is not accessible) -- the server reads the PNG it
+    just wrote and embeds it. Falls back to a message if inline image isn't supported."""
+    img, info = _capture_inline(path)
+    if img is not None:
+        return img
+    return {"ok": False, "capture": info}
+
+
 def _find_viewer_window(auto):
     """Return the PAK 'Graphic Viewer' top-level window, or None."""
     for w in auto.GetRootControl().GetChildren():
@@ -2691,7 +2723,8 @@ def configure_detector_rows(rows: str, deactivate_beyond: int = 0, output: bool 
 @mcp.tool()
 def run_analysis(rows: str, layout: str = "standard.vas_dly",
                  deactivate_beyond: int = 0, capture: bool = True,
-                 capture_path: str = "C:/MCPProject_pak/view_shot.png") -> dict:
+                 capture_path: str = "C:/MCPProject_pak/view_shot.png",
+                 inline_capture: bool = False):
     """CHAINED analysis pipeline in ONE call: configure many rows (families may be
     mixed across rows) -> apply layout -> Graphic Output -> screenshot ->
     server-side verification. Replaces the sequence reset_graphdef +
@@ -2712,6 +2745,8 @@ def run_analysis(rows: str, layout: str = "standard.vas_dly",
     Sound Pressure channels are ALWAYS A-weighted automatically; vibration stays
     linear. Band-pass RMS tables are NOT handled here -- use output_rms (it owns the
     RMS.vas_dly layout + sum-level table). layout="none" skips the layout step.
+    inline_capture=True embeds the screenshot in the response (base64) so it shows
+    directly in chat -- use when the client can't open the saved capture path.
 
     Returns: per-row `applied` steps, a `verification` list (weighting + resolved
     track per row) with `warnings` (sound not A-weighted, track fell back to Time),
@@ -2837,7 +2872,16 @@ def run_analysis(rows: str, layout: str = "standard.vas_dly",
         out = {"ok": True, "rows": results, "verification": verification,
                "warnings": warnings, "deactivated_beyond": int(deactivate_beyond or 0),
                "layout": layout}
-        if capture:
+        _inline_img = None
+        if capture and inline_capture:
+            _inline_img, info = _capture_inline(capture_path)
+            ok = _inline_img is not None
+            out["capture_ok"] = bool(ok)
+            out["capture"] = ({"path": capture_path, "inline": True} if ok else {"error": info})
+            out["next"] = ("Inline screenshot attached to this response -- view it directly."
+                           if ok else
+                           "Read the screenshot at %s for the final visual check." % capture_path)
+        elif capture:
             ok, info = _capture_viewer(capture_path)
             out["capture_ok"] = bool(ok)
             out["capture"] = info if ok else {"error": info}
@@ -2860,6 +2904,10 @@ def run_analysis(rows: str, layout: str = "standard.vas_dly",
                           _fh, ensure_ascii=False)
         except Exception:
             pass
+        # return [json, image] so the screenshot renders inline (no client file access);
+        # plain dict when inline capture was not requested / not available.
+        if _inline_img is not None:
+            return [out, _inline_img]
         return out
     finally:
         _close_gd()
