@@ -13,6 +13,53 @@ These MCP servers are always available in every Claude Desktop window:
 
 PAK allows only **one** COM connection at a time, so run tools sequentially, not in parallel.
 
+## 배포환경 재발방지 체크리스트 (position 매칭 · 캡처 검증)
+
+개발환경에서는 되는데 **배포환경에서 position/채널 매칭이 조용히 깨지는** 사례가 있다.
+아래는 실측으로 확인했거나(✅) 배포 증상에서 강하게 의심되는(⚠️ 확인 필요) 항목이다.
+**position을 쓰는 모든 출력은 응답만 믿지 말고 반드시 캡처로 검증한다.**
+
+1. **`position`은 `get_channels`가 준 라벨 문자열을 글자 그대로 쓴다 (✅ 핵심 원인).**
+   - theader.xml 포맷 데이터는 라벨에 방향 접미사가 붙어 있다 — 예 `"RR_KNUCKLE_LH 1 z +Z"`.
+     이 **전체 문자열**을 `position`에, 방향은 `direction`(예 `+Z`)에 넣는다.
+   - 접미사를 떼면(예 `"RR_KNUCKLE_LH 1"`) **매칭 실패 후 에러 없이 채널 1번으로 조용히 폴백**된다.
+   - 라벨 속 축 문자(x/y/z)와 물리 방향(`direction`)은 **다를 수 있다**(센서 회전 장착). 예: 라벨이
+     `"… y +Z"`인데 물리 방향은 `+Z`. "Z방향"의 기준은 `direction`=+Z이지 라벨의 z 문자가 아니다.
+   - MeasSetup 포맷(예 `"Gear Lever"`)은 접미사가 없다. 즉 접미사 유무는 **저장 포맷에 달렸으니
+     절대 가정하지 말고** `get_channels` 원문을 그대로 복사한다.
+   - 넘긴 `position` 인자와 `get_channels` 라벨이 **공백 개수까지 바이트 단위로 동일한지** 확인한다.
+
+2. **매칭 실패는 에러 없이 지나갈 수 있다 → 캡처로만 확실히 검증 (⚠️ 배포 증상 기반).**
+   - `output_rms`/`configure_*` 응답의 `rows[].channel`은 **넣은 값의 에코**이지 PAK가 실제로 붙인
+     채널이 아니다. 응답이 `ok`여도 그래프가 비었거나 엉뚱할 수 있다.
+   - 성공 판정 = (a) RMS면 `sumlevel_token == "BandpaÞ mag"` **AND** (b) `capture_viewer` → Read로
+     범례/축/곡선이 기대와 일치. 둘 다 통과해야 한다.
+
+3. **캡처 경로는 환경마다 없을 수 있고 대소문자도 섞여 있다 (✅ 확인).**
+   - `output_rms` 기본 캡처 경로는 소문자 **`C:/MCPproject_pak/rms_shot.png`**, 문서 다른 곳/직접
+     캡처는 대문자 **`C:/MCPProject_pak/`** 를 쓴다. 배포 PC에 기본 경로 폴더가 **없으면 저장이 계속
+     실패**하므로(실측 확인), 존재하는 경로(예 `D:/PakData/`)를 명시하거나 캡처 전 경로 존재를 확인한다.
+   - Windows는 대소문자 무시라 보통 같은 폴더지만, 마운트/스테이징에서 경로 문자열이 어긋날 수
+     있으니 **응답의 `capture.path`를 그대로** 스테이징/Read에 쓴다.
+   - 폴더가 세션에 마운트 안 돼 있으면 Read가 "outside connected folders"로 실패 → 그 경로 폴더
+     접근을 먼저 요청(mount)한 뒤 Read. 캡처 실패가 아니라 마운트 문제다.
+
+4. **작업모드(Working mode)가 position 기반이 아니면 position 설정이 실패한다 (⚠️ 배포 이슈 1순위 의심).**
+   - PAK는 `SetChanpos*`가 position 라벨을 요구하는 모드에서만 라벨로 채널을 붙일 수 있다
+     (참고: exterior 트랙 설정 시 `0x80040200 Working mode ... requires a position label`).
+   - 배포에서 position이 안 잡히면 **먼저 `get_working_mode`로 확인**하고, 필요 시
+     `set_working_mode`로 position-oriented 모드로 맞춘 뒤 재시도한다. dev/prod 기본값이 다를 소지가 크다.
+
+5. **캡처가 직전 화면으로 잡히는 리프레시 지연 (✅ 발생).**
+   - `output_rms`/`graphic_output` 직후 `capture_viewer`가 **직전 페이지/상태**를 캡처하는 경우가
+     있다(바이트는 바뀌었는데 내용은 옛 화면).
+   - 대응: `graphic_output`을 한 번 더 명시 호출 → **새 파일명**으로 `capture_viewer` → Read해서
+     범례/페이지 탭이 기대와 맞는지 확인. 같은 파일명을 재사용하면 캐시된 옛 이미지를 읽을 위험이 있다.
+
+> **언어/코드페이지 (⚠️).** 배포 PAK UI 언어가 다르면 `quantity`("Acceleration" vs 독일어
+> "Beschleunigung") 같은 토큰이 선택 리스트에 없어 매칭이 실패할 수 있다. 방향/특수 토큰
+> (`Cart. coord.x`, `BandpaÞ mag`=U+00DE)도 로케일을 탄다. 이 역시 캡처로 드러난다.
+
 ## 외부소음 / Exterior (pass-by) noise — Track parameter Par.-channel (DECIDE FAST)
 
 This is the #1 thing to get right quickly for exterior work. When the task is
@@ -277,6 +324,31 @@ interior work; only **Detector** is added for exterior (see the tools below).
 
 Keep sound and vibration separate (see the separation rule above). All exterior sound is
 A-weighted (auto for Sound Pressure channels).
+
+## Slow-quantity 채널 (토크·RPM·속도·온도 등) 시간 트레이스 + 선형축 (✅ 실측)
+
+CAN/slow 채널(토크 CH66, RPM CH65, 차속, 온도 등)을 시간축 값 트레이스로 출력할 때:
+
+- 데이터 타입 토큰 (대소문자 정확히):
+  - `measurement_data_type="Slow quantity"`
+  - `graphic_data_type="Slow quantity"`  ← 소문자 q. `"Slow Quantity"`/`"Time signal"`은
+    PlotDtype 선택 리스트에 없어 실패(`Value '…' not available in selection list 'PlotDtype'`).
+  - meas type만 `"Slow quantity"`로 줘도 graphic type이 자동으로 `"Slow quantity"`로 잡힌다.
+  - track = Time 기본. `configure_rows`로 여러 런/채널 오버레이(채널별로 `diagram` 분리해
+    토크·RPM을 한 페이지에 동시 출력 가능).
+
+### 물리량은 dB 아닌 선형축 — 단위 그대로 (✅ 실측, 사용자 지정)
+
+토크·RMS·속도·온도 등 물리 채널은 **dB 쓰지 말고 선형(단위 그대로)** 으로 낸다.
+
+- `y_type="lin"`  ← 소문자! `"Lin"`/`"Linear"`는 skaltyp 선택 리스트에 없어 실패
+  (`Value 'Lin' not available in selection list 'skaltyp'`).
+- **함정:** `y_from`/`y_to`를 줄 때 `configure_row`의 `y_type` 기본값이 `"dB"`라 축이 dB로
+  바뀐다(토크가 dB로 눌려 보임). 선형이 필요하면 반드시 `y_type="lin"`을 함께 준다.
+- 자동 스케일이 평탄부를 잘라먹을 수 있으니(예: 토크 350 Nm 평탄부가 축 145에서 잘림)
+  `y_from`/`y_to`로 범위를 명시한다(토크 0~400, RPM 0~16000 등).
+- 적용 범위: 토크/RPM/속도/온도/RMS 등 **물리 채널 한정**. 소음(dB(A))·차수 스펙트럼은
+  종전대로 dB 유지.
 
 ## Other analyses (not RMS)
 
