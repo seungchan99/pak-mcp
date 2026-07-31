@@ -387,7 +387,6 @@
      </ygrids>
      <yscales>
       <scale>
-       <axis start="2.0E1" start_auto="0" stop="1.481E2" stop_auto="0"/>
        <labels offset="300" y="300">
         <scale>
          <font ptsize="7.0"/>

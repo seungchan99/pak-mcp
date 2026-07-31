@@ -350,6 +350,43 @@ CAN/slow 채널(토크 CH66, RPM CH65, 차속, 온도 등)을 시간축 값 트�
 - 적용 범위: 토크/RPM/속도/온도/RMS 등 **물리 채널 한정**. 소음(dB(A))·차수 스펙트럼은
   종전대로 dB 유지.
 
+## 다이어그램별 Y스케일 통일 — 자동스케일 → 공통 고정 (order complex 비교, ✅ 실측)
+
+order complex/스펙트럼을 **차수별(또는 채널별) 다이어그램**으로 나눠 그리면 각 다이어그램이 **자기 데이터에
+맞춰 다른 Y스케일**로 잡혀 크기 비교가 안 된다(0~3 A 박스 꼭대기와 0~0.3 A 박스 꼭대기는 실제 10배 차이).
+차수/채널 간 크기를 비교하려면 **공통 Y축**으로 통일한다.
+
+**언제:** 선형단위(자속 µT, 전류 A, 토크 Nm 등)에서 발생. **dB축(소음 dB(A)·진동 dB(lin))은 20~140로 이미
+공통**이라 불필요. 서로 다른 물리량(토크 vs RPM)은 애초에 비교 대상 아님. 컬러맵(Order APS)은 Y가 아니라 색(Z)축.
+
+**루틴:**
+1. **자동스케일로 먼저 확인** — 뷰어 툴바 `viewer_click(name="Auto scale all diagrams")`.
+   **⚠️ 1클릭=프리셋 해제, 2클릭=실제 오토스케일** (두 번 눌러야 축이 데이터에 맞춰짐, ✅ 실측).
+   slow-quantity(토크·RPM 시간트레이스) 페이지는 이 버튼이 안 먹을 수 있어 아래 `configure_row` y로 직접 지정.
+2. 캡처 → Read로 **각 다이어그램 Y 최대**를 읽어 **글로벌 최대** 산출(최소는 보통 0).
+3. **모든 다이어그램에 공통 [0, 글로벌최대] 적용.** Y축은 다이어그램 공유라 **대표 행 1개/다이어그램**만 세팅하면 됨.
+4. 캡처로 검증(공통 축 + 각 곡선/차수 보존 확인).
+
+**order complex에서 Y 고정 시 핵심 (✅ 실측):** `configure_row`의 `y_from`/`y_to`/`y_type`로 넣되, 이 도구가
+**track를 Time으로 되돌려 RPM track(차수분석)을 깨뜨린다.** 그래서 **RPM track을 명시로 함께** 넘겨야 한다.
+차수 번호(8/19/24/48)와 측정/채널/데이터타입도 같이 넘겨 보존된다. 예(전류 U상, 8차 다이어그램, 공통 0~3.0 A):
+
+```json
+{"row":1,"diagram":1,"curve":1,"measurement":"ENG_01/인버터분리_350_-140tN_01",
+ "position":"U","direction":"S","quantity":"Electric Current",
+ "measurement_data_type":"Throughput","graphic_data_type":"Order complex",
+ "track_position":"CH65","track_direction":"S","track_quantity":"Rotational Speed",
+ "y_type":"lin","y_from":"0","y_to":"3","output":false}
+```
+
+diagram 2/3/4의 대표 행(4차수×4측정=16행이면 행 5/9/13)에도 **같은 y_to(=글로벌최대)** 로 반복,
+**마지막 행만 `output=true`**. 각 `configure_row`는 COM 직렬이라 순차 호출. 실측 예:
+전류 U 자동스케일 3.0/0.6/0.4/0.30 A → 공통 **0~3.0 A**; 자속 +X 0.10/0.014/0.20/0.05 µT → 공통 **0~0.2 µT**.
+
+> Y축 min/max는 Item/DarstFilter의 COM 속성으로 노출되지 않아 `pak_eval` 직접 세팅은 막힌다 — 위 `configure_row`
+> 경로가 정답. (in_pak=false `pak_eval`에서 "createobject: first you must release your old object" 발생 시
+> `release [lindex $peer 1]` 로 잔여 tcom 핸들 해제 후 재시도.)
+
 ## 체이닝 도구 `run_analysis` (대량/다중 분석 한 번에)
 
 `run_analysis`는 `reset → 여러 행 구성(패밀리 혼합 가능) → 레이아웃 → Graphic Output → 캡처 → 서버 검증`을

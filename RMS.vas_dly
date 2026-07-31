@@ -192,9 +192,9 @@
     </zscales>
    </diagram>
   </Defaults>
-  <LayoutAttributes fontfactor="1.25" layoutversion="223" mode="dynamic" pakversion="6.4">
+  <LayoutAttributes fontfactor="1.75" layoutversion="223" mode="dynamic" pakversion="6.4">
    <background color="#FFFFFF" texture=""/>
-   <display height_mm="300" height_px="1440" width_mm="530" width_px="2560"/>
+   <display height_mm="210" height_px="2160" width_mm="336" width_px="3456"/>
    <grid x="500" y="500"/>
    <ruler x="500" y="500"/>
    <size height="21000" width="29700"/>
@@ -387,7 +387,6 @@
      </ygrids>
      <yscales>
       <scale>
-       <axis start="2.0E1" start_auto="0" stop="1.481E2" stop_auto="0"/>
        <labels offset="300" y="300">
         <scale>
          <font ptsize="7.0"/>
