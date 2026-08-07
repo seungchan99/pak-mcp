@@ -3838,6 +3838,139 @@ def gps_match_segment(ref_measurement: str, t1: float, t2: float,
         return {"ok": False, "error": str(e).splitlines()[0][:300]}
 
 
+# --------------------------------------------------------------------------- #
+# Named GPS segments + multi-pass (lap) detection.  A road test drives the SAME
+# named segment several times, so the same lat/lon occurs at several DIFFERENT
+# times. detect_segment_passes finds EVERY same-direction pass (enter near start A
+# -> reach near end B) and returns one time window per lap, so "범용로/러프로드
+# 분석해줘" auto-detects 3 or 4 laps. Fixed segment coords live in a bundled data
+# file (gps_segments.json) next to the server -- customers run by name and never
+# define segments.
+# --------------------------------------------------------------------------- #
+_GPS_SEG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gps_segments.json")
+
+
+def _load_gps_segments():
+    import json as _json
+    with open(_GPS_SEG_FILE, encoding="utf-8") as fh:
+        return _json.load(fh).get("segments", {})
+
+
+def _zone_visits(pts, plat, plon, radius):
+    """[(t_at_closest, min_dist_m), ...] -- one entry per contiguous visit within
+    `radius` m of (plat,plon). A new visit requires leaving the zone first (debounce)."""
+    visits = []
+    in_zone = False
+    best = None
+    for p in pts:
+        d = _hav_m(p[1], p[2], plat, plon)
+        if d <= radius:
+            if not in_zone:
+                in_zone = True; best = (p[0], d)
+            elif d < best[1]:
+                best = (p[0], d)
+        else:
+            if in_zone:
+                visits.append(best); in_zone = False; best = None
+    if in_zone and best:
+        visits.append(best)
+    return visits
+
+
+@mcp.tool()
+def list_gps_segments() -> dict:
+    """List the pre-defined named GPS road segments (bundled gps_segments.json next to
+    the server): each has start/end lat/lon. Customers analyse BY NAME (e.g. '범용로',
+    '러프로드') and never define segments. Use detect_segment_passes to get each
+    measurement's lap windows for a named segment."""
+    try:
+        segs = _load_gps_segments()
+        out = {n: {"start": s.get("start"), "end": s.get("end")} for n, s in segs.items()}
+        return {"ok": True, "count": len(out), "segments": out, "file": _GPS_SEG_FILE}
+    except Exception as e:
+        return {"ok": False, "error": str(e).splitlines()[0][:200], "file": _GPS_SEG_FILE}
+
+
+@mcp.tool()
+def detect_segment_passes(segment: str, target_measurement: str,
+                          radius_m: float = 15.0,
+                          start_lat: float = 0.0, start_lon: float = 0.0,
+                          end_lat: float = 0.0, end_lon: float = 0.0) -> dict:
+    """Find EVERY same-direction pass (lap) through a named GPS segment in ONE
+    measurement -> one time window [track_start, track_stop] per lap. Handles the road
+    test where the same segment is driven ~3-4 times: nearest-point matching
+    (gps_match_segment) would find only ONE crossing; this scans for ALL A(start)->B(end)
+    crossings and auto-counts the laps.
+
+    Detection (same direction): each time the track comes within radius_m of the segment
+    START begins a lap; the first time it then reaches within radius_m of the segment END
+    (before the next START) closes it.
+
+    Args:
+        segment: named segment from gps_segments.json (e.g. '범용로'). Leave '' and pass
+            start_lat/lon + end_lat/lon to use explicit coordinates instead.
+        target_measurement: e.g. 'GPSDATA/80_GPS'.
+        radius_m: proximity threshold in metres (default 15).
+
+    Returns per pass {pass, track_start, track_stop, match_m:{A,B}, complete}. INCOMPLETE
+    laps (reached START but not END before the next lap / end of data) come back with
+    complete=false + closest_b:{t,dist} so you can offer the user: analyse anyway / shrink
+    the segment END to closest_b / skip. Feed each COMPLETE lap's track_start/track_stop
+    straight into output_rms (one row per lap)."""
+    try:
+        if segment:
+            segs = _load_gps_segments()
+            if segment not in segs:
+                return {"ok": False, "error": "segment '%s' not found (have: %s)"
+                        % (segment, ", ".join(segs.keys()))}
+            s = segs[segment]
+            Alat = float(s["start"]["lat"]); Alon = float(s["start"]["lon"])
+            Blat = float(s["end"]["lat"]);   Blon = float(s["end"]["lon"])
+        else:
+            Alat, Alon, Blat, Blon = float(start_lat), float(start_lon), float(end_lat), float(end_lon)
+        _ensure_sourced()
+        _ev("set reference [createobject $pak_application]")
+        try:
+            _ev("set browser [$reference Browser]")
+            dest = _ev("$browser DestDataPath")
+        finally:
+            _ev("catch {release $browser}; unset browser")
+            _ev("catch {release $reference}; unset reference")
+        pts, _st = _gps_points(_meas_folder(dest, target_measurement))
+        R = float(radius_m)
+        avis = sorted(_zone_visits(pts, Alat, Alon, R))
+        bvis = sorted(_zone_visits(pts, Blat, Blon, R))
+        passes = []
+        for i, (tA, dA) in enumerate(avis):
+            nextA = avis[i + 1][0] if i + 1 < len(avis) else float("inf")
+            cand = [(tB, dB) for (tB, dB) in bvis if tA < tB < nextA]
+            if cand:
+                tB, dB = min(cand, key=lambda x: x[0])
+                passes.append({"pass": len(passes) + 1,
+                               "track_start": round(tA, 3), "track_stop": round(tB, 3),
+                               "match_m": {"A": round(dA, 1), "B": round(dB, 1)},
+                               "complete": True})
+            else:
+                seg = [p for p in pts if tA < p[0] < nextA]
+                cb = None
+                if seg:
+                    cbp = min(seg, key=lambda p: _hav_m(p[1], p[2], Blat, Blon))
+                    cb = {"t": round(cbp[0], 3), "dist": round(_hav_m(cbp[1], cbp[2], Blat, Blon), 1)}
+                passes.append({"pass": len(passes) + 1,
+                               "track_start": round(tA, 3), "track_stop": None,
+                               "match_m": {"A": round(dA, 1), "B": None},
+                               "complete": False, "closest_b": cb,
+                               "note": "reached START but not END before next lap/end"})
+        n_ok = sum(1 for p in passes if p["complete"])
+        return {"ok": True, "segment": segment or "explicit",
+                "measurement": target_measurement, "radius_m": R,
+                "passes_found": len(passes), "complete": n_ok,
+                "incomplete": len(passes) - n_ok, "passes": passes,
+                "hint": "Feed each COMPLETE lap's track_start/track_stop to output_rms (one row per lap). For incomplete laps ask: analyse anyway / shrink to closest_b / skip."}
+    except Exception as e:
+        return {"ok": False, "error": str(e).splitlines()[0][:300]}
+
+
 @mcp.tool()
 def open_gps_map(capture: bool = False) -> dict:
     """Open the PAK GPS Map Viewer by clicking the 'Open map' button (the GPS icon at

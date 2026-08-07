@@ -1,0 +1,24 @@
+{
+  "reference_measurement": "GPSDATA/80_GPS",
+  "note": "Named GPS location segments defined by lat/lon endpoints. Use gps_match_segment (or a coord-match) to find each target run's time window, then output_rms per segment for same-location RMS comparison across speeds.",
+  "segments": {
+    "A": {
+      "start": { "lat": 35.154638, "lon": 128.110169 },
+      "end":   { "lat": 35.152198, "lon": 128.108185 },
+      "picked_on": "GPSDATA/80_GPS",
+      "picked_t": { "t1": 5.505, "t2": 20.005 }
+    },
+    "B": {
+      "start": { "lat": 35.151603, "lon": 128.107492 },
+      "end":   { "lat": 35.148101, "lon": 128.103419 },
+      "picked_on": "GPSDATA/80_GPS",
+      "picked_t": { "t1": 24.005, "t2": 48.005 }
+    },
+    "C": {
+      "start": { "lat": 35.146416, "lon": 128.101392 },
+      "end":   { "lat": 35.144592, "lon": 128.099955 },
+      "picked_on": "GPSDATA/80_GPS",
+      "picked_t": { "t1": 59.755, "t2": 70.255 }
+    }
+  }
+}

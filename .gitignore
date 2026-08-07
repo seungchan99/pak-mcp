@@ -70,3 +70,6 @@ run_analysis_progress.json
 run_analysis_result.json
 _*.json
 view_shot.png
+
+# --- skill package build output ---
+dist/
